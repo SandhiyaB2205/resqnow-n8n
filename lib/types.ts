@@ -8,6 +8,6 @@ export interface AuditEvent { id: string; actor: string; action: string; time: s
 export interface Notification { id: string; title: string; body: string; read: boolean; createdAt: string }
 export interface EmergencyQR { id: string; status: "ACTIVE" | "REVOKED"; updatedAt: string; sharedItems: string[] }
 export interface Session { authenticated: boolean; role: "patient" | "provider"; userId: string }
-export interface AppSettings { demoMode: boolean; notificationsEnabled: boolean; emergencyProfileEnabled: boolean }
+export interface AppSettings { notificationsEnabled: boolean; emergencyProfileEnabled: boolean }
 export interface Provider { id: string; name: string; facility: string; role: string }
 export interface AppState { profile: PatientProfile; records: MedicalRecord[]; consents: Consent[]; audit: AuditEvent[]; notifications: Notification[]; emergencyQR: EmergencyQR; settings: AppSettings; session: Session | null }
