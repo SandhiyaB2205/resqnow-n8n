@@ -42,7 +42,13 @@ let workerPromise: Promise<any> | undefined
 async function getWorker() {
   if (!workerPromise) {
     const { createWorker } = await import("tesseract.js")
-    workerPromise = createWorker("eng", 1, { logger: () => undefined })
+    // Keep these public asset paths in sync with the installed tesseract.js version.
+    workerPromise = createWorker("eng", 1, {
+      workerPath: "/tesseract/worker.min.js",
+      corePath: "/tesseract/tesseract-core.wasm.js",
+      langPath: "/tesseract/lang-data",
+      logger: () => undefined,
+    })
   }
   return workerPromise
 }
@@ -76,6 +82,7 @@ async function preprocessImage(file: File) {
 
 async function extractPdf(file: File, onProgress?: ProgressHandler): Promise<ExtractionResult> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs")
+  pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs"
   const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
   const pageResults: PageExtractionResult[] = []
   const errors: string[] = []
@@ -113,9 +120,14 @@ export async function extractDocumentText(file: File, onProgress?: ProgressHandl
   if (!allowed.includes(file.type)) throw new Error("This file type isn't supported. Please upload a PDF, JPG, PNG, or WEBP.")
   if (file.size > 10 * 1024 * 1024) throw new Error("This document is larger than 10 MB.")
   emit(onProgress, 0, 0, 1, "Preparing document", "preparing")
-  if (file.type === "application/pdf") return extractPdf(file, onProgress)
+  if (file.type === "application/pdf") {
+    const result = await extractPdf(file, onProgress)
+    if (result.text.replace(/--- Page \d+ ---/g, "").trim().length < 20) throw new Error("We couldn't read any text from this document. Try a clearer photo, better lighting, or a different file.")
+    return result
+  }
   const input = await preprocessImage(file)
   const pageResult = await recognizeImage(input, 1, 1, onProgress)
+  if (pageResult.text.trim().length < 20) throw new Error("We couldn't read any text from this document. Try a clearer photo, better lighting, or a different file.")
   const result = { text: pageResult.text, source: "ocr" as const, confidence: pageResult.confidence, pages: 1, pageResults: [pageResult], status: pageResult.status, errors: [] }
   emit(onProgress, 100, 1, 1, "Extraction complete", "complete")
   return result
