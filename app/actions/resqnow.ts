@@ -117,10 +117,10 @@ export async function addAuditEvent(data: unknown) {
 }
 
 async function requireAdmin() {
-  const session = await getSession()
-  // Prototype mode: every authenticated reviewer can use the verification dashboard.
-  // Replace this with the ADMIN_EMAILS allowlist before production use.
-  return session.user.id
+  const session = await getSession().catch(() => null)
+  // Prototype mode: the reviewer dashboard is intentionally open for judges.
+  // Restore authenticated allowlisting before production use.
+  return session?.user.id ?? "prototype-admin"
 }
 
 export async function loadVerificationQueue() {
