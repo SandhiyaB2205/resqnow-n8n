@@ -19,7 +19,7 @@ export default function AuthForm({ signup = false }: { signup?: boolean }) {
     const result = signup ? await authClient.signUp.email({ email: values.email, password: values.password, name: values.name, role: values.role } as Parameters<typeof authClient.signUp.email>[0]) : await authClient.signIn.email({ email: values.email, password: values.password })
     if (!result.error && signup && values.role === "doctor") { try { await registerProvider({ fullName: values.name, email: values.email, affiliation: values.affiliation, licenseNumber: values.licenseNumber }) } catch { setLoading(false); setError("Doctor account created, but verification details were not submitted. Please try again from the doctor dashboard."); return } }
     setLoading(false)
-    if (result.error) { setError("We couldn't complete that request. Check your details and try again."); return }
+    if (result.error) { setError(result.error.message || (signup ? "This email may already have an account. Try logging in instead." : "Check your email and password and try again.")); return }
     const role = (result.data?.user as { role?: string } | undefined)?.role || values.role; router.push(role === "admin" ? "/admin/verification" : role === "doctor" ? "/doctor" : "/dashboard"); router.refresh()
   }
   const field = (label: string, key: keyof typeof values, type = "text", required = true) => <label key={key}>{label}<input required={required} type={type} value={values[key]} onChange={e => setValues({...values, [key]: e.target.value})}/></label>
