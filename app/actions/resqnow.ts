@@ -27,8 +27,12 @@ async function requirePatient() {
 
 export async function registerProvider(input: { fullName: string; email: string; affiliation: string; licenseNumber: string }) {
   const session = await getSession()
-  if (!input.fullName.trim() || !input.email.trim() || !input.affiliation.trim() || !input.licenseNumber.trim()) throw new Error("Provider details are required")
-  const provider = { id: crypto.randomUUID(), doctorId: session.user.id, fullName: input.fullName.trim(), email: input.email.trim().toLowerCase(), affiliation: input.affiliation.trim(), licenseNumber: input.licenseNumber.trim(), verificationStatus: "pending" as const }
+  const fullName = String(input.fullName ?? "").trim().slice(0, 120)
+  const affiliation = String(input.affiliation ?? "").trim().slice(0, 160)
+  const licenseNumber = String(input.licenseNumber ?? "").trim().slice(0, 80)
+  const email = session.user.email.toLowerCase()
+  if (!fullName || !affiliation || !licenseNumber || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("Valid provider details are required")
+  const provider = { id: crypto.randomUUID(), doctorId: session.user.id, fullName, email, affiliation, licenseNumber, verificationStatus: "pending" as const }
   await db.insert(providers).values(provider).onConflictDoUpdate({ target: providers.doctorId, set: { fullName: provider.fullName, email: provider.email, affiliation: provider.affiliation, licenseNumber: provider.licenseNumber, verificationStatus: "pending", updatedAt: new Date() } })
   return { ...provider, verificationStatus: "pending" }
 }
@@ -57,7 +61,9 @@ export async function loadDoctorAccess() {
 
 function cleanJson(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid data")
-  return value as Record<string, unknown>
+  const serialized = JSON.stringify(value)
+  if (!serialized || serialized.length > 100_000) throw new Error("Data is too large")
+  return JSON.parse(serialized) as Record<string, unknown>
 }
 
 export async function loadWallet() {
@@ -102,8 +108,12 @@ export async function revokeConsent(id: string) {
 }
 
 export async function createEmergencyToken(sharedItems: string[] = []) {
-  const userId = await requirePatient(); const token = randomBytes(24).toString("base64url"); const tokenHash = createHash("sha256").update(token).digest("hex")
-  await db.insert(emergencyTokens).values({ id: crypto.randomUUID(), userId, tokenHash, sharedItems })
+  const userId = await requirePatient()
+  const activeTokens = await db.select({ id: emergencyTokens.id }).from(emergencyTokens).where(and(eq(emergencyTokens.userId, userId), eq(emergencyTokens.enabled, true))).limit(3)
+  if (activeTokens.length >= 3) throw new Error("Revoke an existing emergency QR before creating another")
+  const safeItems = sharedItems.filter((item): item is string => typeof item === "string").slice(0, 20)
+  const token = randomBytes(24).toString("base64url"); const tokenHash = createHash("sha256").update(token).digest("hex")
+  await db.insert(emergencyTokens).values({ id: crypto.randomUUID(), userId, tokenHash, sharedItems: safeItems })
   await db.insert(auditEvents).values({ id: crypto.randomUUID(), userId, data: { action: "emergency_token_created", createdAt: new Date().toISOString() } })
   return { token, sharedItems }
 }
@@ -115,10 +125,10 @@ export async function addAuditEvent(data: unknown) {
 }
 
 async function requireAdmin() {
-  const session = await getSession().catch(() => null)
-  // Prototype mode: the reviewer dashboard is intentionally open for judges.
-  // Restore authenticated allowlisting before production use.
-  return session?.user.id ?? "prototype-admin"
+  const session = await getSession()
+  const allowed = (process.env.ADMIN_EMAILS ?? "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean)
+  if (!allowed.includes(session.user.email.toLowerCase())) throw new Error("Admin access required")
+  return session.user.id
 }
 
 export async function loadVerificationQueue() {
