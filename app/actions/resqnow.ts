@@ -36,7 +36,8 @@ export async function registerProvider(input: { fullName: string; email: string;
 
 export async function loadVerifiedProviders() {
   await requirePatient()
-  return db.select({ id: providers.id, name: providers.fullName, facility: providers.affiliation, licenseNumber: providers.licenseNumber }).from(providers).where(eq(providers.verificationStatus, "verified"))
+  const rows = await db.select({ id: providers.id, name: providers.affiliation, facility: providers.affiliation, licenseNumber: providers.licenseNumber }).from(providers).where(eq(providers.verificationStatus, "verified"))
+  return Array.from(new Map(rows.map((row) => [row.facility.toLowerCase(), row])).values())
 }
 
 export async function loadDoctorAccess() {
@@ -47,7 +48,7 @@ export async function loadDoctorAccess() {
   if (!provider) return { provider: null, patients: [], records: [] }
   if (provider.verificationStatus !== "verified") return { provider, patients: [], records: [] }
   const shared = await db.select({ patientId: consents.userId, data: consents.data }).from(consents)
-  const active = shared.filter((row) => { const data = row.data as Record<string, unknown>; return data.providerId === provider.id || data.providerId === provider.doctorId ? data.status === "ACTIVE" : false })
+  const active = shared.filter((row) => { const data = row.data as Record<string, unknown>; return data.facility === provider.affiliation || data.providerId === provider.id || data.providerId === provider.doctorId ? data.status === "ACTIVE" : false })
   const patientIds = active.map((row) => row.patientId)
   if (!patientIds.length) return { provider, patients: [], records: [] }
   const recordRows = await db.select().from(healthRecords)
@@ -113,4 +114,31 @@ export async function addAuditEvent(data: unknown) {
   const userId = await requirePatient(); const payload = cleanJson(data)
   await db.insert(auditEvents).values({ id: crypto.randomUUID(), userId, data: payload })
   revalidatePath("/"); return { ok: true }
+}
+
+async function requireAdmin() {
+  const session = await getSession()
+  const allowed = (process.env.ADMIN_EMAILS ?? "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean)
+  if (!allowed.includes(session.user.email.toLowerCase())) throw new Error("Admin access required")
+  return session.user.id
+}
+
+export async function loadVerificationQueue() {
+  await requireAdmin()
+  return db.select().from(providers).orderBy(desc(providers.updatedAt))
+}
+
+export async function updateProviderVerification(providerId: string, status: "verified" | "rejected" | "pending") {
+  const adminId = await requireAdmin()
+  const result = await db.update(providers).set({ verificationStatus: status, updatedAt: new Date() }).where(eq(providers.id, providerId)).returning()
+  if (!result[0]) throw new Error("Doctor application not found")
+  await db.insert(auditEvents).values({ id: crypto.randomUUID(), userId: result[0].doctorId, data: { action: `doctor_${status}`, providerId, adminId, createdAt: new Date().toISOString() } })
+  revalidatePath("/admin/verification"); revalidatePath("/doctor"); revalidatePath("/dashboard")
+  return result[0]
+}
+
+export async function loadVerifiedHospitals() {
+  await requirePatient()
+  const rows = await db.select({ id: providers.id, hospital: providers.affiliation, licenseNumber: providers.licenseNumber }).from(providers).where(eq(providers.verificationStatus, "verified"))
+  return Array.from(new Map(rows.map((row) => [row.hospital.toLowerCase(), row])).values())
 }
