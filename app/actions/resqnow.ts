@@ -52,8 +52,11 @@ export async function createConsent(data: unknown) {
 
 export async function revokeConsent(id: string) {
   const userId = await getUserId()
-  await db.delete(consents).where(and(eq(consents.id, id), eq(consents.userId, userId)))
-  await db.insert(auditEvents).values({ id: crypto.randomUUID(), userId, data: { action: "consent_revoked", consentId: id, createdAt: new Date().toISOString() } })
+  const existing = await db.select().from(consents).where(and(eq(consents.id, id), eq(consents.userId, userId))).limit(1)
+  if (!existing[0]) throw new Error("Consent not found")
+  const payload = { ...(existing[0].data as Record<string, unknown>), status: "REVOKED", revokedAt: new Date().toISOString() }
+  await db.update(consents).set({ data: payload, updatedAt: new Date() }).where(and(eq(consents.id, id), eq(consents.userId, userId)))
+  await db.insert(auditEvents).values({ id: crypto.randomUUID(), userId, data: { action: "consent_revoked", consentId: id, createdAt: new Date().toISOString(), status: "REVOKED" } })
   revalidatePath("/"); return { ok: true }
 }
 
