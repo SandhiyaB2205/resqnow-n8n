@@ -1,5 +1,7 @@
 "use client"
 
+import { stripDoctorQualifications } from "./utils"
+
 export type PageExtractionResult = {
   page: number
   text: string
@@ -203,8 +205,6 @@ const normalizeDateCandidate = (value: string) => {
 }
 const DATE_TOKEN = String.raw`(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}\.\d{1,2}\.\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4})`
 const doctorName = String.raw`(?:(?:Dr\.?|Doctor)\s+)?[A-Z][A-Za-z.]+(?:\s+[A-Z][A-Za-z.]+){0,3}`
-const preserveDoctorQualifications = (value: string) => clean(value)
-
 export function inferRecordFields(text: string): ExtractedRecordFields {
   const source = text.replace(/\u0000/g, " ").trim()
   const normalized = source
