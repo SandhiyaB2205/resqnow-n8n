@@ -5,7 +5,8 @@ import { headers } from "next/headers"
 import { revalidatePath } from "next/cache"
 import { auth } from "../../lib/auth"
 import { db } from "../../lib/db"
-import { auditEvents, consents, healthProfiles, healthRecords } from "../../lib/db/schema"
+import { auditEvents, consents, healthProfiles, healthRecords, emergencyTokens } from "../../lib/db/schema"
+import { createHash, randomBytes } from "node:crypto"
 
 async function getUserId() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -42,11 +43,25 @@ export async function createRecord(id: string, data: unknown) {
   revalidatePath("/"); return { id, ...payload }
 }
 
+export async function createConsent(data: unknown) {
+  const userId = await getUserId(); const payload = cleanJson(data); const id = String(payload.id || crypto.randomUUID())
+  await db.insert(consents).values({ id, userId, data: payload, updatedAt: new Date() }).onConflictDoUpdate({ target: consents.id, set: { data: payload, updatedAt: new Date() } })
+  await db.insert(auditEvents).values({ id: crypto.randomUUID(), userId, data: { action: "consent_granted", consentId: id, createdAt: new Date().toISOString() } })
+  revalidatePath("/"); return { id, ...payload }
+}
+
 export async function revokeConsent(id: string) {
   const userId = await getUserId()
   await db.delete(consents).where(and(eq(consents.id, id), eq(consents.userId, userId)))
   await db.insert(auditEvents).values({ id: crypto.randomUUID(), userId, data: { action: "consent_revoked", consentId: id, createdAt: new Date().toISOString() } })
   revalidatePath("/"); return { ok: true }
+}
+
+export async function createEmergencyToken(sharedItems: string[] = []) {
+  const userId = await getUserId(); const token = randomBytes(24).toString("base64url"); const tokenHash = createHash("sha256").update(token).digest("hex")
+  await db.insert(emergencyTokens).values({ id: crypto.randomUUID(), userId, tokenHash, sharedItems })
+  await db.insert(auditEvents).values({ id: crypto.randomUUID(), userId, data: { action: "emergency_token_created", createdAt: new Date().toISOString() } })
+  return { token, sharedItems }
 }
 
 export async function addAuditEvent(data: unknown) {
