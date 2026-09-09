@@ -5,7 +5,7 @@ import { headers } from "next/headers"
 import { revalidatePath } from "next/cache"
 import { auth } from "../../lib/auth"
 import { db } from "../../lib/db"
-import { auditEvents, consents, healthProfiles, healthRecords, emergencyTokens } from "../../lib/db/schema"
+import { auditEvents, consents, healthProfiles, healthRecords, emergencyTokens, providers, user } from "../../lib/db/schema"
 import { createHash, randomBytes } from "node:crypto"
 
 async function getSession() {
@@ -23,6 +23,37 @@ async function requirePatient() {
   const session = await getSession()
   if ((session.user as { role?: string }).role === "doctor") throw new Error("Patient access required")
   return session.user.id
+}
+
+export async function registerProvider(input: { fullName: string; email: string; affiliation: string; licenseNumber: string }) {
+  const session = await getSession()
+  if ((session.user as { role?: string }).role !== "doctor") throw new Error("Doctor access required")
+  if (!input.fullName.trim() || !input.email.trim() || !input.affiliation.trim() || !input.licenseNumber.trim()) throw new Error("Provider details are required")
+  const provider = { id: crypto.randomUUID(), doctorId: session.user.id, fullName: input.fullName.trim(), email: input.email.trim().toLowerCase(), affiliation: input.affiliation.trim(), licenseNumber: input.licenseNumber.trim(), verificationStatus: "pending" as const }
+  await db.insert(providers).values(provider).onConflictDoUpdate({ target: providers.doctorId, set: { fullName: provider.fullName, email: provider.email, affiliation: provider.affiliation, licenseNumber: provider.licenseNumber, verificationStatus: "pending", updatedAt: new Date() } })
+  return { ...provider, verificationStatus: "pending" }
+}
+
+export async function loadVerifiedProviders() {
+  await requirePatient()
+  return db.select({ id: providers.id, name: providers.fullName, facility: providers.affiliation, licenseNumber: providers.licenseNumber }).from(providers).where(eq(providers.verificationStatus, "verified"))
+}
+
+export async function loadDoctorAccess() {
+  const session = await getSession()
+  if ((session.user as { role?: string }).role !== "doctor") throw new Error("Doctor access required")
+  const providerRows = await db.select().from(providers).where(eq(providers.doctorId, session.user.id)).limit(1)
+  const provider = providerRows[0]
+  if (!provider) return { provider: null, patients: [], records: [] }
+  if (provider.verificationStatus !== "verified") return { provider, patients: [], records: [] }
+  const shared = await db.select({ patientId: consents.userId, data: consents.data }).from(consents)
+  const active = shared.filter((row) => { const data = row.data as Record<string, unknown>; return data.providerId === provider.id || data.providerId === provider.doctorId ? data.status === "ACTIVE" : false })
+  const patientIds = active.map((row) => row.patientId)
+  if (!patientIds.length) return { provider, patients: [], records: [] }
+  const recordRows = await db.select().from(healthRecords)
+  const records = recordRows.filter((row) => patientIds.includes(row.userId)).map((row) => ({ id: row.id, ...(row.data as Record<string, unknown>) }))
+  const patientRows = await db.select({ id: user.id, name: user.name, email: user.email }).from(user)
+  return { provider, patients: patientRows.filter((row) => patientIds.includes(row.id)), records }
 }
 
 function cleanJson(value: unknown) {
