@@ -163,22 +163,40 @@ function extractAdditionalInfo(text: string) {
   return extras
 }
 
-const normalizeDateCandidate = (value: string) => value.replace(/(?<=\d)[Oo](?=\d)/g, "0").replace(/(?<=\d)[Il](?=\d)/g, "1").replace(/\./g, "/").trim()
+const normalizeDateCandidate = (value: string) => {
+  const cleaned = value.replace(/(?<=\d)[Oo](?=\d)/g, "0").replace(/(?<=\d)[Il](?=\d)/g, "1").replace(/\./g, "/").trim()
+  const numeric = cleaned.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/)
+  if (numeric) {
+    const [, first, second, year] = numeric
+    const fullYear = year.length === 2 ? `20${year}` : year
+    return Number(first) > 12 ? `${fullYear}-${second.padStart(2, "0")}-${first.padStart(2, "0")}` : `${fullYear}-${first.padStart(2, "0")}-${second.padStart(2, "0")}`
+  }
+  const yearFirst = cleaned.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/)
+  if (yearFirst) return `${yearFirst[1]}-${yearFirst[2].padStart(2, "0")}-${yearFirst[3].padStart(2, "0")}`
+  const written = cleaned.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/) || cleaned.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/)
+  if (written) {
+    const months: Record<string, string> = { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" }
+    const day = /^\d/.test(written[1]) ? written[1] : written[2]
+    const month = /^\d/.test(written[1]) ? written[2] : written[1]
+    return `${written[3]}-${months[month.slice(0, 3).toLowerCase()] || "01"}-${day.padStart(2, "0")}`
+  }
+  return cleaned
+}
 const DATE_TOKEN = String.raw`(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}\.\d{1,2}\.\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4})`
-const doctorName = String.raw`(?:Dr\.?\s+|Doctor\s+)[A-Z][A-Za-z.]+(?:\s+[A-Z][A-Za-z.]+)*`
+const doctorName = String.raw`(?:(?:Dr\.?|Doctor)\s+)?[A-Z][A-Za-z.]+(?:\s+[A-Z][A-Za-z.]+){0,3}`
 const stripDoctorQualifications = (value: string) => clean(value.replace(/\s+(?:MBBS|MD|MS|DO|FRCS|MRCP|DM|DNB|Reg\.?\s*No\.?\s*\d+[A-Z0-9/-]*)\b.*$/i, ""))
 
 export function inferRecordFields(text: string): ExtractedRecordFields {
   const source = text.replace(/\u0000/g, " ").trim()
   const normalized = source
   const dob = firstMatch(normalized, [new RegExp(`(?:date\\s+of\\s+birth|dob)\\s*[:\\-]?\\s*(${DATE_TOKEN})`, "i")])
-  const reportDate = firstMatch(normalized, [new RegExp(`(?:report|visit|admission|discharge|specimen|collected|sample)\\s+date\\s*[:\\-]?\\s*(${DATE_TOKEN})`, "i")])
+  const reportDate = firstMatch(normalized, [new RegExp(`(?:report|visit|admission|discharge|specimen|collected|sample)\\s*date\\s*[:\\-]?\\s*(${DATE_TOKEN})`, "i"), /(?:date|dated)\s*[:\-]?\s*([^\n]+)/i])
   const allDates = [...normalized.matchAll(new RegExp(`(${DATE_TOKEN})`, "gi"))].map((match) => normalizeDateCandidate(match[1]))
   const date = normalizeDateCandidate(reportDate || allDates.find((candidate) => candidate !== dob) || "")
-  const provider = stripDoctorQualifications(firstMatch(normalized, [new RegExp(`(?:physician|consultant|attending|referred\\s+by|under\\s+the\\s+care\\s+of|treating\\s+doctor|signed\\s+by|doctor)\\s*[:\\-]?\\s*(${doctorName})`, "i"), new RegExp(`(${doctorName})`, "g")]))
+  const provider = stripDoctorQualifications(firstMatch(normalized, [new RegExp(`(?:physician|consultant|attending|referred\\s+by|under\\s+the\\s+care\\s+of|treating\\s+doctor|signed\\s+by|doctor)\\s*[:\\-]?\\s*(${doctorName})`, "i"), new RegExp(`\\b(Dr\\.?\\s+[A-Z][A-Za-z.]+(?:\\s+[A-Z][A-Za-z.]+){0,3})\\b`, "i")]))
   const labeledFacility = firstMatch(normalized, [/(?:hospital|clinic|facility|medical\s+centre|medical\s+center|diagnostics|laboratory|labs?)\s*[:\-]?\s*([^.;,\n]+)/i])
   const isDoctorLine = (line: string) => new RegExp(`^${doctorName}$`, "i").test(line)
-  const headerLines = source.split(/\r?\n/).map((line) => clean(line)).filter((line) => line.length > 3 && line.length <= 120 && !isDoctorLine(line) && !/\b(?:patient|name|dob|date|report|mrn|id)\b/i.test(line) && !new RegExp(DATE_TOKEN, "i").test(line))
+  const headerLines = source.split(/\r?\n/).map((line) => clean(line)).filter((line) => line.length > 3 && line.length <= 120 && !isDoctorLine(line) && !/\b(?:patient|name|dob|date|report|mrn|id)\b/i.test(line) && !new RegExp(DATE_TOKEN, "i").test(line)).slice(0, 5)
   const preferredHeader = headerLines.find((line) => /\b(?:hospital|clinic|medical\s+center|medical\s+centre|diagnostics|labs?|laboratory|healthcare|nursing\s+home)\b/i.test(line))
   const headerFacility = preferredHeader || headerLines.find((line) => /^(?:[A-Z][A-Za-z0-9&.'-]*\s*){2,}$/.test(line) || line === line.toUpperCase()) || ""
   const facility = clean(labeledFacility || headerFacility)
