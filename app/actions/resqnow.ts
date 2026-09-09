@@ -27,7 +27,7 @@ export async function loadWallet() {
     db.select().from(consents).where(eq(consents.userId, userId)).orderBy(desc(consents.updatedAt)),
     db.select().from(auditEvents).where(eq(auditEvents.userId, userId)).orderBy(desc(auditEvents.createdAt)).limit(20),
   ])
-  return { profile: profile[0]?.data ?? null, records: records.map((row) => ({ id: row.id, ...row.data })), consents: consentRows.map((row) => ({ id: row.id, ...row.data })), audit: audit.map((row) => row.data) }
+  return { profile: profile[0]?.data ?? null, records: records.map((row) => ({ id: row.id, ...(row.data as Record<string, unknown>) })), consents: consentRows.map((row) => ({ id: row.id, ...(row.data as Record<string, unknown>) })), audit: audit.map((row) => row.data) }
 }
 
 export async function saveProfile(data: unknown) {
