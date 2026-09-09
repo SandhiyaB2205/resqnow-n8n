@@ -19,6 +19,25 @@ export type ExtractionResult = {
   errors: string[]
 }
 
+export type ExtractionSpecResult = {
+  hospital_name: string | null
+  doctor_name: string | null
+  date: string | null
+  low_confidence_fields: string[]
+}
+
+export function normalizeExtractionSpecResult(input: unknown): ExtractionSpecResult {
+  const value = input && typeof input === "object" ? input as Record<string, unknown> : {}
+  const list = Array.isArray(value.low_confidence_fields) ? value.low_confidence_fields.filter((field): field is string => typeof field === "string") : []
+  const nullableString = (candidate: unknown) => typeof candidate === "string" && candidate.trim() ? candidate.trim() : null
+  return {
+    hospital_name: nullableString(value.hospital_name ?? value.hospital ?? value.facility),
+    doctor_name: nullableString(value.doctor_name ?? value.doctor ?? value.provider),
+    date: nullableString(value.date),
+    low_confidence_fields: list,
+  }
+}
+
 export type ExtractedRecordFields = {
   title: string
   provider: string
@@ -216,7 +235,8 @@ export function inferRecordFields(text: string): ExtractedRecordFields {
   const additionalInfo = [...[
     diagnosis && `Diagnosis: ${diagnosis}`, assessment && `Assessment: ${assessment}`, procedure && `Procedure: ${procedure}`, medication && `Medication: ${medication}`, findings && `Findings: ${findings}`, patientName && `Patient name: ${patientName}`, dateOfBirth && `Date of birth: ${dateOfBirth}`
   ].filter(Boolean), ...labeledExtras].join("\n")
-  return { title, provider, facility, date, type, patientName, dateOfBirth, diagnosis, assessment, procedure, medication, findings, description, additionalInfo }
+  const extractionSpec = normalizeExtractionSpecResult({ hospital_name: facility || null, doctor_name: provider || null, date: date || null, low_confidence_fields: [!facility && "hospital_name", !provider && "doctor_name", !date && "date"].filter(Boolean) })
+  return { title, provider: extractionSpec.doctor_name || "", facility: extractionSpec.hospital_name || "", date: extractionSpec.date || "", type, patientName, dateOfBirth, diagnosis, assessment, procedure, medication, findings, description, additionalInfo }
 }
 
 export async function releaseOcrWorker() {
