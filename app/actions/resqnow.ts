@@ -8,9 +8,20 @@ import { db } from "../../lib/db"
 import { auditEvents, consents, healthProfiles, healthRecords, emergencyTokens } from "../../lib/db/schema"
 import { createHash, randomBytes } from "node:crypto"
 
-async function getUserId() {
+async function getSession() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user?.id) throw new Error("Unauthorized")
+  return session
+}
+
+async function getUserId() {
+  const session = await getSession()
+  return session.user.id
+}
+
+async function requirePatient() {
+  const session = await getSession()
+  if ((session.user as { role?: string }).role === "doctor") throw new Error("Patient access required")
   return session.user.id
 }
 
@@ -20,7 +31,7 @@ function cleanJson(value: unknown) {
 }
 
 export async function loadWallet() {
-  const userId = await getUserId()
+  const userId = await requirePatient()
   const [profile, records, consentRows, audit] = await Promise.all([
     db.select().from(healthProfiles).where(eq(healthProfiles.userId, userId)).limit(1),
     db.select().from(healthRecords).where(eq(healthRecords.userId, userId)).orderBy(desc(healthRecords.updatedAt)),
@@ -31,27 +42,27 @@ export async function loadWallet() {
 }
 
 export async function saveProfile(data: unknown) {
-  const userId = await getUserId(); const payload = cleanJson(data)
+  const userId = await requirePatient(); const payload = cleanJson(data)
   await db.insert(healthProfiles).values({ userId, data: payload, updatedAt: new Date() }).onConflictDoUpdate({ target: healthProfiles.userId, set: { data: payload, updatedAt: new Date() } })
   revalidatePath("/"); return payload
 }
 
 export async function createRecord(id: string, data: unknown) {
-  const userId = await getUserId(); const payload = cleanJson(data)
+  const userId = await requirePatient(); const payload = cleanJson(data)
   await db.insert(healthRecords).values({ id, userId, data: payload, updatedAt: new Date() }).onConflictDoUpdate({ target: healthRecords.id, set: { data: payload, updatedAt: new Date() } })
   await db.insert(auditEvents).values({ id: crypto.randomUUID(), userId, data: { action: "record_created", recordId: id, createdAt: new Date().toISOString() } })
   revalidatePath("/"); return { id, ...payload }
 }
 
 export async function createConsent(data: unknown) {
-  const userId = await getUserId(); const payload = cleanJson(data); const id = String(payload.id || crypto.randomUUID())
+  const userId = await requirePatient(); const payload = cleanJson(data); const id = String(payload.id || crypto.randomUUID())
   await db.insert(consents).values({ id, userId, data: payload, updatedAt: new Date() }).onConflictDoUpdate({ target: consents.id, set: { data: payload, updatedAt: new Date() } })
   await db.insert(auditEvents).values({ id: crypto.randomUUID(), userId, data: { action: "consent_granted", consentId: id, createdAt: new Date().toISOString() } })
   revalidatePath("/"); return { id, ...payload }
 }
 
 export async function revokeConsent(id: string) {
-  const userId = await getUserId()
+  const userId = await requirePatient()
   const existing = await db.select().from(consents).where(and(eq(consents.id, id), eq(consents.userId, userId))).limit(1)
   if (!existing[0]) throw new Error("Consent not found")
   const payload = { ...(existing[0].data as Record<string, unknown>), status: "REVOKED", revokedAt: new Date().toISOString() }
@@ -61,14 +72,14 @@ export async function revokeConsent(id: string) {
 }
 
 export async function createEmergencyToken(sharedItems: string[] = []) {
-  const userId = await getUserId(); const token = randomBytes(24).toString("base64url"); const tokenHash = createHash("sha256").update(token).digest("hex")
+  const userId = await requirePatient(); const token = randomBytes(24).toString("base64url"); const tokenHash = createHash("sha256").update(token).digest("hex")
   await db.insert(emergencyTokens).values({ id: crypto.randomUUID(), userId, tokenHash, sharedItems })
   await db.insert(auditEvents).values({ id: crypto.randomUUID(), userId, data: { action: "emergency_token_created", createdAt: new Date().toISOString() } })
   return { token, sharedItems }
 }
 
 export async function addAuditEvent(data: unknown) {
-  const userId = await getUserId(); const payload = cleanJson(data)
+  const userId = await requirePatient(); const payload = cleanJson(data)
   await db.insert(auditEvents).values({ id: crypto.randomUUID(), userId, data: payload })
   revalidatePath("/"); return { ok: true }
 }
