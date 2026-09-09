@@ -24,6 +24,7 @@ export type ExtractedRecordFields = {
   provider: string
   facility: string
   date: string
+  type: string
   patientName: string
   dateOfBirth: string
   diagnosis: string
@@ -136,7 +137,21 @@ export async function extractDocumentText(file: File, onProgress?: ProgressHandl
 
 const firstMatch = (text: string, patterns: RegExp[]) => patterns.map((pattern) => text.match(pattern)?.[1]?.trim()).find(Boolean) || ""
 const clean = (value: string) => value.replace(/[ \t]+/g, " ").replace(/[|]+/g, " ").trim().slice(0, 400)
-const KNOWN_LABELS = /^(hospital|clinic|facility|medical\s+centre|medical\s+center|doctor|physician|consultant|attending|referred\s+by|patient|patient\s+name|name|date\s+of\s+birth|dob|report|study|investigation|procedure\s+title|report\s+date|visit\s+date|specimen\s+date)\s*[:\-]/i
+const KNOWN_LABELS = /^(hospital|clinic|facility|medical\s+centre|medical\s+center|doctor|physician|consultant|attending|referred\s+by|under\s+the\s+care\s+of|treating\s+doctor|signed\s+by|patient|patient\s+name|name|date\s+of\s+birth|dob|report|study|investigation|procedure\s+title|report\s+date|visit\s+date|admission\s+date|discharge\s+date|specimen\s+date|collected\s+date|sample\s+date)\s*[:\-]/i
+
+const TYPE_KEYWORDS: [string, RegExp][] = [
+  ["Prescription", /\b(rx|prescription|tablet|tab\.|capsule|dosage|take\s+\d+\s+(tablet|capsule)|sig:|refill)\b/i],
+  ["Lab Report", /\b(lab\s*report|laboratory|specimen|test\s+results?|reference\s+range|hemoglobin|glucose|cholesterol|cbc|blood\s+test)\b/i],
+  ["Discharge Summary", /\b(discharge\s+summary|admitted\s+on|date\s+of\s+discharge|hospital\s+course)\b/i],
+  ["Imaging", /\b(x-ray|xray|mri|ct\s+scan|ultrasound|sonography|radiograph|imaging\s+report)\b/i],
+  ["Vaccination", /\b(vaccine|vaccination|immuniz(a|s)ation|dose\s+\d+|booster)\b/i],
+  ["Consultation", /\b(consultation|chief\s+complaint|clinical\s+notes|follow-?up)\b/i],
+]
+
+export function inferDocumentType(text: string): string {
+  for (const [type, pattern] of TYPE_KEYWORDS) if (pattern.test(text)) return type
+  return "Other"
+}
 
 function extractAdditionalInfo(text: string) {
   const lines = text.split(/\r?\n/).map((line) => clean(line)).filter(Boolean)
@@ -148,16 +163,28 @@ function extractAdditionalInfo(text: string) {
   return extras
 }
 
+const normalizeDateCandidate = (value: string) => value.replace(/(?<=\d)[Oo](?=\d)/g, "0").replace(/(?<=\d)[Il](?=\d)/g, "1").replace(/\./g, "/").trim()
+const DATE_TOKEN = String.raw`(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{1,2}\.\d{1,2}\.\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4})`
+const doctorName = String.raw`(?:Dr\.?\s+|Doctor\s+)[A-Z][A-Za-z.]+(?:\s+[A-Z][A-Za-z.]+)*`
+const stripDoctorQualifications = (value: string) => clean(value.replace(/\s+(?:MBBS|MD|MS|DO|FRCS|MRCP|DM|DNB|Reg\.?\s*No\.?\s*\d+[A-Z0-9/-]*)\b.*$/i, ""))
+
 export function inferRecordFields(text: string): ExtractedRecordFields {
   const source = text.replace(/\u0000/g, " ").trim()
   const normalized = source
-  const date = firstMatch(normalized, [/\b(20\d{2}[-/]\d{1,2}[-/]\d{1,2})\b/, /\b(\d{1,2}[/-]\d{1,2}[/-]20\d{2})\b/, /(?:report|visit|specimen)\s+date\s*[:\-]?\s*([^.;,\n]+)/i])
-  const provider = clean(firstMatch(normalized, [/(?:doctor|physician|consultant)\s*[:\-]?\s*([^.;,\n]+)/i, /(?:attending|referred\s+by)\s*[:\-]?\s*([^.;,\n]+)/i]))
-  const labeledFacility = firstMatch(normalized, [/(?:hospital|clinic|facility|medical\s+centre|medical\s+center)\s*[:\-]?\s*([^.;,\n]+)/i])
-  const headerLines = source.split(/\r?\n/).map((line) => clean(line)).filter((line) => line.length > 3 && line.length <= 120 && !/\b(?:patient|name|dob|date|report|mrn|id)\b/i.test(line) && !/\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/.test(line))
-  const headerFacility = headerLines.find((line) => /^(?:[A-Z][A-Za-z0-9&.'-]*\s*){2,}$/.test(line) || line === line.toUpperCase()) || ""
+  const dob = firstMatch(normalized, [new RegExp(`(?:date\\s+of\\s+birth|dob)\\s*[:\\-]?\\s*(${DATE_TOKEN})`, "i")])
+  const reportDate = firstMatch(normalized, [new RegExp(`(?:report|visit|admission|discharge|specimen|collected|sample)\\s+date\\s*[:\\-]?\\s*(${DATE_TOKEN})`, "i")])
+  const allDates = [...normalized.matchAll(new RegExp(`(${DATE_TOKEN})`, "gi"))].map((match) => normalizeDateCandidate(match[1]))
+  const date = normalizeDateCandidate(reportDate || allDates.find((candidate) => candidate !== dob) || "")
+  const provider = stripDoctorQualifications(firstMatch(normalized, [new RegExp(`(?:physician|consultant|attending|referred\\s+by|under\\s+the\\s+care\\s+of|treating\\s+doctor|signed\\s+by|doctor)\\s*[:\\-]?\\s*(${doctorName})`, "i"), new RegExp(`(${doctorName})`, "g")]))
+  const labeledFacility = firstMatch(normalized, [/(?:hospital|clinic|facility|medical\s+centre|medical\s+center|diagnostics|laboratory|labs?)\s*[:\-]?\s*([^.;,\n]+)/i])
+  const isDoctorLine = (line: string) => new RegExp(`^${doctorName}$`, "i").test(line)
+  const headerLines = source.split(/\r?\n/).map((line) => clean(line)).filter((line) => line.length > 3 && line.length <= 120 && !isDoctorLine(line) && !/\b(?:patient|name|dob|date|report|mrn|id)\b/i.test(line) && !new RegExp(DATE_TOKEN, "i").test(line))
+  const preferredHeader = headerLines.find((line) => /\b(?:hospital|clinic|medical\s+center|medical\s+centre|diagnostics|labs?|laboratory|healthcare|nursing\s+home)\b/i.test(line))
+  const headerFacility = preferredHeader || headerLines.find((line) => /^(?:[A-Z][A-Za-z0-9&.'-]*\s*){2,}$/.test(line) || line === line.toUpperCase()) || ""
   const facility = clean(labeledFacility || headerFacility)
-  const title = clean(firstMatch(normalized, [/(?:report|study|investigation|procedure)\s*(?:title|name)?\s*[:\-]?\s*([^.;\n]+)/i]))
+  const type = inferDocumentType(normalized)
+  const explicitTitle = clean(firstMatch(normalized, [/(?:report|study|investigation|procedure)\s*(?:title|name)?\s*[:\-]\s*([^.;\n]+)/i]))
+  const title = explicitTitle || (facility ? `${type} — ${facility}` : date ? `${type} — ${date}` : type !== "Other" ? type : "Medical document")
   const patientName = clean(firstMatch(normalized, [/(?:patient|patient\s+name|name)\s*[:\-]?\s*([^.;,\n]+)/i]))
   const dateOfBirth = clean(firstMatch(normalized, [/(?:date\s+of\s+birth|dob)\s*[:\-]?\s*([^.;,\n]+)/i]))
   const diagnosis = clean(firstMatch(normalized, [/(?:diagnosis|impression)\s*[:\-]?\s*([^.;\n]+)/i]))
@@ -166,12 +193,12 @@ export function inferRecordFields(text: string): ExtractedRecordFields {
   const medication = clean(firstMatch(normalized, [/(?:medication|prescription|medicine)\s*[:\-]?\s*([^.;\n]+)/i]))
   const findings = clean(firstMatch(normalized, [/(?:findings|results|observations)\s*[:\-]?\s*([^.;\n]+)/i]))
   const description = clean(firstMatch(normalized, [/(?:description|notes|clinical\s+notes?)\s*[:\-]?\s*([^.;\n]+)/i]))
-  const mapped = new Set([title, provider, facility, date, patientName, dateOfBirth, description])
-  const labeledExtras = extractAdditionalInfo(source).filter((item) => !Array.from(mapped).some((value) => value && item.toLowerCase().endsWith(value.toLowerCase())))
+  const mapped = [title, provider, facility, date, patientName, dateOfBirth, description]
+  const labeledExtras = extractAdditionalInfo(source).filter((item) => !mapped.some((value) => value && item.toLowerCase().endsWith(value.toLowerCase())))
   const additionalInfo = [...[
     diagnosis && `Diagnosis: ${diagnosis}`, assessment && `Assessment: ${assessment}`, procedure && `Procedure: ${procedure}`, medication && `Medication: ${medication}`, findings && `Findings: ${findings}`, patientName && `Patient name: ${patientName}`, dateOfBirth && `Date of birth: ${dateOfBirth}`
   ].filter(Boolean), ...labeledExtras].join("\n")
-  return { title, provider, facility, date, patientName, dateOfBirth, diagnosis, assessment, procedure, medication, findings, description, additionalInfo }
+  return { title, provider, facility, date, type, patientName, dateOfBirth, diagnosis, assessment, procedure, medication, findings, description, additionalInfo }
 }
 
 export async function releaseOcrWorker() {
