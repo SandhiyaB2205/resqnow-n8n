@@ -128,7 +128,10 @@ export function inferRecordFields(text: string): ExtractedRecordFields {
   const normalized = text.replace(/\u0000/g, " ").replace(/\s+/g, " ").trim()
   const date = firstMatch(normalized, [/\b(20\d{2}[-/]\d{1,2}[-/]\d{1,2})\b/, /\b(\d{1,2}[/-]\d{1,2}[/-]20\d{2})\b/, /(?:report|visit|specimen)\s+date\s*[:\-]?\s*([^.;,]+)/i])
   const provider = clean(firstMatch(normalized, [/(?:doctor|physician|consultant)\s*[:\-]?\s*([^.;,]+)/i, /(?:attending|referred\s+by)\s*[:\-]?\s*([^.;,]+)/i]))
-  const facility = clean(firstMatch(normalized, [/(?:hospital|clinic|facility|medical\s+centre|medical\s+center)\s*[:\-]?\s*([^.;,]+)/i]))
+  const labeledFacility = firstMatch(normalized, [/(?:hospital|clinic|facility|medical\s+centre|medical\s+center)\s*[:\-]?\s*([^.;,]+)/i])
+  const headerLines = text.split(/\r?\n/).map((line) => clean(line)).filter((line) => line.length > 3 && line.length <= 120 && !/\b(?:patient|name|dob|date|report|mrn|id)\b/i.test(line) && !/\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/.test(line))
+  const headerFacility = headerLines.find((line) => /^(?:[A-Z][A-Za-z0-9&.'-]*\s*){2,}$/.test(line) || line === line.toUpperCase()) || ""
+  const facility = clean(labeledFacility || headerFacility)
   const title = clean(firstMatch(normalized, [/(?:report|study|investigation|procedure)\s*(?:title|name)?\s*[:\-]?\s*([^.;]+)/i]))
   const patientName = clean(firstMatch(normalized, [/(?:patient|patient\s+name|name)\s*[:\-]?\s*([^.;,]+)/i]))
   const dateOfBirth = firstMatch(normalized, [/(?:date\s+of\s+birth|dob)\s*[:\-]?\s*([^.;,]+)/i])
