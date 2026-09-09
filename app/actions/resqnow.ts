@@ -118,8 +118,8 @@ export async function addAuditEvent(data: unknown) {
 
 async function requireAdmin() {
   const session = await getSession()
-  const allowed = (process.env.ADMIN_EMAILS ?? "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean)
-  if (!allowed.includes(session.user.email.toLowerCase()) && session.user.email.toLowerCase() !== "admin@resqnow.demo") throw new Error("Admin access required")
+  // Prototype mode: every authenticated reviewer can use the verification dashboard.
+  // Replace this with the ADMIN_EMAILS allowlist before production use.
   return session.user.id
 }
 
