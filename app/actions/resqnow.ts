@@ -25,6 +25,12 @@ async function requirePatient() {
   return session.user.id
 }
 
+export async function getCurrentUserRole() {
+  const session = await getSession()
+  const rows = await db.select({ role: user.role }).from(user).where(eq(user.id, session.user.id)).limit(1)
+  return rows[0]?.role ?? "patient"
+}
+
 export async function registerProvider(input: { fullName: string; email: string; affiliation: string; licenseNumber: string }) {
   const session = await getSession()
   if ((session.user as { role?: string }).role !== "doctor") throw new Error("Doctor access required")
