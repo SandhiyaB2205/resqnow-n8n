@@ -2,7 +2,7 @@ export type ConsentStatus = "ACTIVE" | "EXPIRED" | "REVOKED"
 export type AuditStatus = "AUTHORIZED" | "EXPIRED" | "REVOKED"
 
 export interface PatientProfile { id: string; name: string; dob: string; bloodGroup: string; emergencyContact: string; allergies: string[]; medications: string[]; conditions: string[]; procedures: string[] }
-export interface MedicalRecord { id: string; title: string; provider: string; facility: string; date: string; type: string; fileName?: string; patientName?: string; dateOfBirth?: string; description?: string; rawText?: string; confidence?: number; extractionStatus?: string; status: "VERIFIED" | "PENDING" }
+export interface MedicalRecord { id: string; title: string; provider: string; facility: string; date: string; type: string; fileName?: string; patientName?: string; dateOfBirth?: string; description?: string; additionalInfo?: string; rawText?: string; confidence?: number; extractionStatus?: string; status: "VERIFIED" | "PENDING" }
 export interface Consent { id: string; providerId: string; providerName: string; facility: string; selectedData: string[]; purpose: string; createdAt: string; expiresAt: string; status: ConsentStatus }
 export interface AuditEvent { id: string; actor: string; action: string; time: string; status: AuditStatus }
 export interface Notification { id: string; title: string; body: string; read: boolean; createdAt: string }
