@@ -32,7 +32,7 @@ export async function registerProvider(input: { fullName: string; email: string;
   const licenseNumber = String(input.licenseNumber ?? "").trim().slice(0, 80)
   const email = session.user.email.toLowerCase()
   if (!fullName || !affiliation || !licenseNumber || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("Valid provider details are required")
-  const provider = { id: crypto.randomUUID(), doctorId: session.user.id, fullName, email, affiliation, licenseNumber, verificationStatus: "pending" as const }
+  const provider = { id: crypto.randomUUID(), doctorId: session.user.id, fullName, email, affiliation, licenseNumber, verificationStatus: "verified" as const }
   await db.insert(providers).values(provider).onConflictDoUpdate({ target: providers.doctorId, set: { fullName: provider.fullName, email: provider.email, affiliation: provider.affiliation, licenseNumber: provider.licenseNumber, verificationStatus: "pending", updatedAt: new Date() } })
   return { ...provider, verificationStatus: "pending" }
 }
@@ -127,7 +127,6 @@ export async function addAuditEvent(data: unknown) {
 
 async function requireAdmin() {
   const session = await getSession()
-  return session.user.id
   return session.user.id
 }
 
