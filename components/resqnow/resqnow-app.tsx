@@ -98,8 +98,8 @@ export default function ResqnowApp({ initialView = "dashboard" }: { initialView?
     setSettings(next)
     setN8nEmissionEnabled(next.n8nEnabled !== false)
     emit("settings.updated", "settings-page", { setting: key, enabled: next[key] })
-    if (key === "n8nEnabled") showToast(next.n8nEnabled ? "Automations enabled" : "Automations paused — events will be dropped")
-    else showToast("Preference saved — workflow notified")
+    if (key === "n8nEnabled") showToast(next.n8nEnabled ? "Automated processing on" : "Automated processing paused")
+    else showToast("Preference saved")
   }
 
   const addAudit = (action: string, actor = "You", status: AuditEvent["status"] = "AUTHORIZED") => {
@@ -235,7 +235,15 @@ export default function ResqnowApp({ initialView = "dashboard" }: { initialView?
         </header>
 
         <AnimatePresence mode="wait">
-          <motion.div key={view} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="content">
+          <motion.div
+            key={view}
+            initial={{ opacity: 0, y: 18, rotateX: -5 }}
+            animate={{ opacity: 1, y: 0, rotateX: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="content"
+            style={{ transformPerspective: 1200 }}
+          >
             <View
               view={view} profile={profile} setProfile={setProfile} records={filtered} consents={consents} setConsents={setConsents}
               audit={audit} qr={qr} qrToken={qrToken} qrRef={qrRef} onEmergency={openEmergency} onRegenerate={regenerateQR} onDownload={downloadQR}
@@ -366,18 +374,18 @@ function Dashboard({ profile, records, consents, audit, onEmergency, setView }: 
   const runs = getRuns()
   return (
     <div className="dashboard-view">
-      <Header
-        eyebrow="YOUR HEALTH WALLET"
-        title={`Good morning, ${profile.name.split(" ")[0]}`}
+      <Header eyebrow="YOUR HEALTH WALLET" title={`Good morning, ${profile.name.split(" ")[0]}`}
         body="Your health information is organized, verified, and always within reach."
         action={<button className="outline" onClick={onEmergency}><QrCode size={16} />Emergency QR</button>}
       />
       <div className="quick-grid">
         {quickLinks.map(({ href, label, icon: Icon, tone }) => (
-          <a className="card stat-card" key={href} href={href}>
-            <span className={`stat-icon ${tone}`}><Icon /></span>
-            <div><small>Open</small><strong>{label}</strong></div>
-          </a>
+          <Tilt key={href}>
+            <a className="card stat-card" href={href}>
+              <span className={`stat-icon ${tone}`}><Icon /></span>
+              <div><small>Open</small><strong>{label}</strong></div>
+            </a>
+          </Tilt>
         ))}
       </div>
       <div className="grid-3">
@@ -473,7 +481,7 @@ function Records({ records, setRecords, addAudit, emit, showToast }: { records: 
     const id = `record-${Date.now().toString(36)}`
     const newRecord: MedicalRecord = {
       id, title: "New upload", provider: "Unassigned", date: new Date().toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }),
-      type: "Lab Reports", status: "PENDING", data: "Awaiting verification workflow…",
+      type: "Lab Reports", status: "PENDING", data: "Awaiting verification…",
     }
     setRecords((items) => [newRecord, ...items])
     emit("record.added", "records-page", { recordId: id, recordTitle: newRecord.title, provider: newRecord.provider })
@@ -528,9 +536,9 @@ function Share({ consents, setConsents, addAudit, emit, showToast, providers }: 
     setConsents((items) => [consent, ...items])
     emit("consent.granted", "share-page", { providerName: provider.name, purpose, scopes })
     addAudit(`Consent granted — ${provider.name}`)
-    emit("notify.access", "n8n-consent-workflow", { actor: provider.name, action: "New consent granted" })
+    emit("notify.access", "consent-lifecycle", { actor: provider.name, action: "New consent granted" })
     setModalOpen(false)
-    showToast("Access granted — consent lifecycle workflow running")
+    showToast("Access granted — the provider is notified and expiry is scheduled")
   }
   return (
     <>
@@ -554,7 +562,7 @@ function Share({ consents, setConsents, addAudit, emit, showToast, providers }: 
                 setConsents((items) => items.map((consent) => consent.id === item.id ? { ...consent, status: "REVOKED" } : consent))
                 emit("consent.revoked", "share-page", { providerName: item.providerName, purpose: item.purpose, scopes: item.selectedData })
                 addAudit(`Consent revoked — ${item.providerName}`)
-                showToast("Access revoked — n8n workflow cutting provider access")
+                showToast("Access revoked — the provider loses access immediately")
               }}>Revoke</button>
             )}
           </div>
@@ -566,7 +574,7 @@ function Share({ consents, setConsents, addAudit, emit, showToast, providers }: 
             <button className="modal-close" aria-label="Close" onClick={() => setModalOpen(false)}><X size={19} /></button>
             <span className="section-label">SHARE ACCESS</span>
             <h2>Grant consent</h2>
-            <p className="modal-copy">The consent lifecycle workflow validates the window, notifies the provider and schedules expiry.</p>
+            <p className="modal-copy">Access lasts 7 days, the provider is notified, and it expires automatically unless you revoke it sooner.</p>
             <div className="edit-grid">
               <label>Provider
                 <select value={providerId} onChange={(event) => setProviderId(event.target.value)}>
@@ -616,11 +624,11 @@ function History({ audit }: { audit: AuditEvent[] }) {
 function Emergency({ profile, qr, qrToken, qrRef, onRegenerate, onDownload, onPrint }: { profile: PatientProfile; qr: EmergencyQR; qrToken: string; qrRef: React.RefObject<HTMLCanvasElement | null>; onRegenerate: () => void; onDownload: () => void; onPrint: () => void }) {
   return (
     <>
-      <Header eyebrow="EMERGENCY MODE" title="Emergency QR" body="Only critical information is displayed. Scanning triggers the responder workflow."
+      <Header eyebrow="EMERGENCY MODE" title="Emergency QR"      body="Only critical information is displayed. Scanning alerts your emergency contact and shares a read-only packet."
         action={<span className="status-pill">{qr.status}</span>} />
       <div className="emergency-layout">
         <section className="card qr-card">
-          <div className="qr-frame">
+          <div className="qr-frame qr-float">
             <QRCodeCanvas ref={qrRef} value={typeof window !== "undefined" ? `${window.location.origin}/emergency-access?t=${qrToken}` : ""} size={210} level="H" />
           </div>
           <h2>Emergency Health Profile</h2>
@@ -650,7 +658,7 @@ function Settings({ settings, onToggle, onReset }: { settings: AppSettings; onTo
       <Header eyebrow="PREFERENCES" title="Settings" body="Manage your wallet preferences." />
       <div className="card panel settings-card">
         <div className="setting-row"><div><strong>Background services</strong><p>Keep extraction, verification and coordination running automatically.</p></div><button className={`toggle ${settings.demoMode ? "on" : ""}`} onClick={() => onToggle("demoMode")} aria-pressed={settings.demoMode}><span /></button></div>
-        <div className="setting-row"><div><strong>Access notifications</strong><p>Alerts fire through the n8n fan-out workflow.</p></div><button className={`toggle ${settings.notificationsEnabled ? "on" : ""}`} onClick={() => onToggle("notificationsEnabled")} aria-pressed={settings.notificationsEnabled}><span /></button></div>
+        <div className="setting-row"><div><strong>Access notifications</strong><p>Alerts whenever someone views your shared information.</p></div><button className={`toggle ${settings.notificationsEnabled ? "on" : ""}`} onClick={() => onToggle("notificationsEnabled")} aria-pressed={settings.notificationsEnabled}><span /></button></div>
         <div className="setting-row"><div><strong>Emergency profile</strong><p>Keep your limited emergency QR profile available.</p></div><button className={`toggle ${settings.emergencyProfileEnabled ? "on" : ""}`} onClick={() => onToggle("emergencyProfileEnabled")} aria-pressed={settings.emergencyProfileEnabled}><span /></button></div>
         <div className="setting-row"><div><strong>Automated processing</strong><p>When paused, wallet activity is not processed until you turn it back on.</p></div><button className={`toggle ${settings.n8nEnabled ? "on" : ""}`} onClick={() => onToggle("n8nEnabled")} aria-pressed={settings.n8nEnabled}><span /></button></div>
         <div className="setting-row"><div><strong>Reset data</strong><p>Restore the sample wallet data and clear the activity log.</p></div><button className="outline" onClick={onReset}>Reset data</button></div>

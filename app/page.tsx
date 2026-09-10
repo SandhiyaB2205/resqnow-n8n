@@ -2,7 +2,7 @@ import Link from "next/link"
 import {
   Activity, ArrowRight, BellRing, FileCheck2, HeartPulse, QrCode, ShieldCheck, Siren, Workflow,
 } from "lucide-react"
-import { HeroScene, LandingTilt } from "../components/resqnow/hero-3d"
+import { HeroScene, LandingTilt, Reveal3D } from "../components/resqnow/hero-3d"
 
 const HERO_IMAGE = process.env.NEXT_PUBLIC_HERO_IMAGE_URL || "https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&w=1600&q=80"
 const WARD_IMAGE = process.env.NEXT_PUBLIC_WARD_IMAGE_URL || "https://images.unsplash.com/photo-1586773860418-d37222d8fce3?auto=format&fit=crop&w=1200&q=80"
@@ -31,7 +31,7 @@ export default function LandingPage() {
       </nav>
 
       <header className="landing-hero">
-        <div className="hero-copy">
+        <Reveal3D className="hero-copy">
           <span className="eyebrow">PATIENT-CONTROLLED HEALTH WALLET</span>
           <h1>The right health information, <em>at the right time.</em></h1>
           <p>
@@ -47,61 +47,75 @@ export default function LandingPage() {
             <span><Activity size={15} />Audited access</span>
             <span><Workflow size={15} />Automated</span>
           </div>
-        </div>
+        </Reveal3D>
         <HeroScene imageSrc={HERO_IMAGE} imageAlt="Modern hospital building with emergency entrance" />
       </header>
 
       <section className="landing-section" id="workflows">
-        <span className="eyebrow">AUTOMATED CARE</span>
-        <h2>Care that acts the moment you can't.</h2>
-        <p className="section-intro">Purpose-built services power your wallet: emergency response, consent control, verification and instant alerts.</p>
+        <Reveal3D>
+          <span className="eyebrow">AUTOMATED CARE</span>
+          <h2>Care that acts the moment you can't.</h2>
+          <p className="section-intro">Purpose-built services power your wallet: emergency response, consent control, verification and instant alerts.</p>
+        </Reveal3D>
         <div className="workflows-grid">
-          {workflows.map(({ icon: Icon, name, detail }) => (
-            <LandingTilt key={name}>
-              <section className="card workflow-card">
-                <div className="workflow-top"><span className="workflow-icon"><Icon size={18} /></span><span className="status-pill">ACTIVE</span></div>
-                <h3>{name}</h3>
-                <p>{detail}</p>
-              </section>
-            </LandingTilt>
+          {workflows.map(({ icon: Icon, name, detail }, index) => (
+            <Reveal3D key={name} delay={index * 0.08}>
+              <LandingTilt>
+                <section className="card workflow-card">
+                  <div className="workflow-top"><span className="workflow-icon"><Icon size={18} /></span><span className="status-pill">ACTIVE</span></div>
+                  <h3>{name}</h3>
+                  <p>{detail}</p>
+                </section>
+              </LandingTilt>
+            </Reveal3D>
           ))}
         </div>
-        <p className="section-note">Every service runs securely in the background and is monitored around the clock.</p>
+        <Reveal3D><p className="section-note">Every service runs securely in the background and is monitored around the clock.</p></Reveal3D>
       </section>
 
       <section className="landing-feature">
-        <div>
-          <span className="eyebrow">DESIGNED FOR REAL WARDS</span>
-          <h2>Built with emergency rooms in mind.</h2>
-          <p>
-            First responders scan one QR and get exactly what they need — blood group, allergies,
-            medications, conditions and your contact — nothing more, logged every time.
-          </p>
-          <Link className="btn white" href="/emergency-access">Preview the responder view <ArrowRight size={15} /></Link>
-        </div>
-        <div className="consent-visual">
-          <div className="ward-photo">
-            <img src={WARD_IMAGE} alt="Hospital corridor with medical staff" />
+        <Reveal3D>
+          <div>
+            <span className="eyebrow">DESIGNED FOR REAL WARDS</span>
+            <h2>Built with emergency rooms in mind.</h2>
+            <p>
+              First responders scan one QR and get exactly what they need — blood group, allergies,
+              medications, conditions and your contact — nothing more, logged every time.
+            </p>
+            <Link className="btn white" href="/emergency-access">Preview the responder view <ArrowRight size={15} /></Link>
           </div>
-          <div className="mini-consent">
-            <span className="provider-avatar">CG</span>
-            <span><strong>City General Hospital</strong><small>Emergency physician</small></span>
-            <span className="status-pill active">GRANTED</span>
-            <hr />
-            <div className="mini-tags"><span>Blood group</span><span>Allergies</span><span>Medications</span></div>
-            <span className="consent-expiry"><ShieldCheck size={12} /> Read-only · auto-expires · audited</span>
+        </Reveal3D>
+        <Reveal3D delay={0.12}>
+          <div className="consent-visual">
+            <div className="ward-photo">
+              <img src={WARD_IMAGE} alt="Hospital corridor with medical staff" />
+            </div>
+            <div className="mini-consent">
+              <span className="provider-avatar">CG</span>
+              <span><strong>City General Hospital</strong><small>Emergency physician</small></span>
+              <span className="status-pill active">GRANTED</span>
+              <hr />
+              <div className="mini-tags"><span>Blood group</span><span>Allergies</span><span>Medications</span></div>
+              <span className="consent-expiry"><ShieldCheck size={12} /> Read-only · auto-expires · audited</span>
+            </div>
           </div>
-        </div>
+        </Reveal3D>
       </section>
 
       <section className="impact" id="security">
         <span className="eyebrow">WHY IT MATTERS</span>
         <h2>Critical data, zero chaos.</h2>
         <div className="impact-grid">
-          <section className="impact-card"><QrCode size={22} /><h3>Seconds to respond</h3><p>One scan delivers the full critical packet to the responders treating you.</p></section>
-          <section className="impact-card"><ShieldCheck size={22} /><h3>Consent first</h3><p>Providers see only approved scopes — and revocation applies the instant you tap revoke.</p></section>
-          <section className="impact-card"><Activity size={22} /><h3>Everything audited</h3><p>Every access is written to your history — transparent by default, visible to you alone.</p></section>
-          <section className="impact-card"><Workflow size={22} /><h3>Always on</h3><p>Alerts, expiries and verification run automatically in the background.</p></section>
+          {[
+            { icon: <QrCode size={22} />, title: "Seconds to respond", copy: "One scan delivers the full critical packet to the responders treating you." },
+            { icon: <ShieldCheck size={22} />, title: "Consent first", copy: "Providers see only approved scopes — and revocation applies the instant you tap revoke." },
+            { icon: <Activity size={22} />, title: "Everything audited", copy: "Every access is written to your history — transparent by default, visible to you alone." },
+            { icon: <Workflow size={22} />, title: "Always on", copy: "Alerts, expiries and verification run automatically in the background." },
+          ].map(({ icon, title, copy }, index) => (
+            <Reveal3D key={title} delay={index * 0.07}>
+              <section className="impact-card">{icon}<h3>{title}</h3><p>{copy}</p></section>
+            </Reveal3D>
+          ))}
         </div>
       </section>
 

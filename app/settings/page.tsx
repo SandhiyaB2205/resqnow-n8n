@@ -1,10 +1,10 @@
 "use client"
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { ArrowLeft, Check, HeartPulse, ShieldCheck, Workflow } from "lucide-react"
+import { ArrowLeft, Check, HeartPulse, ShieldCheck } from "lucide-react"
 import { getStored, setStored, STORAGE_KEYS } from "../../lib/storage"
 import { mockSettings } from "../../lib/mock-data"
-import { emitN8nEvent } from "../../lib/n8n"
+import { emitN8nEvent, setN8nEmissionEnabled } from "../../lib/n8n"
 import type { AppSettings } from "../../lib/types"
 
 export default function SettingsPage() {
@@ -12,7 +12,9 @@ export default function SettingsPage() {
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    setSettings(getStored(STORAGE_KEYS.settings, mockSettings))
+    const stored = getStored(STORAGE_KEYS.settings, mockSettings)
+    setSettings(stored)
+    setN8nEmissionEnabled(stored.n8nEnabled !== false)
     setMounted(true)
   }, [])
 
@@ -20,6 +22,7 @@ export default function SettingsPage() {
     const next = { ...settings, [key]: !settings[key] }
     setSettings(next)
     if (mounted) setStored(STORAGE_KEYS.settings, next)
+    if (key === "n8nEnabled") setN8nEmissionEnabled(next.n8nEnabled !== false)
     void emitN8nEvent({ event: "settings.updated", source: "settings-page", payload: { setting: key, enabled: next[key] } })
   }
 
@@ -33,7 +36,7 @@ export default function SettingsPage() {
       </div>
       <section className="card settings-card">
         <div className="setting-row">
-          <div><strong>Local wallet data</strong><p>Keep wallet data on this device.</p></div>
+          <div><strong>Background services</strong><p>Keep extraction, verification and coordination running automatically.</p></div>
           <button className={`toggle ${settings.demoMode ? "on" : ""}`} onClick={() => update("demoMode")} aria-pressed={settings.demoMode}><span /></button>
         </div>
         <div className="setting-row">
@@ -45,7 +48,7 @@ export default function SettingsPage() {
           <button className={`toggle ${settings.emergencyProfileEnabled ? "on" : ""}`} onClick={() => update("emergencyProfileEnabled")} aria-pressed={settings.emergencyProfileEnabled}><span /></button>
         </div>
         <div className="setting-row">
-          <div><strong>Automations</strong><p>Master switch. When off, every event from this wallet is dropped before it reaches the gateway.</p></div>
+          <div><strong>Automated processing</strong><p>When paused, wallet activity is not processed until you turn it back on.</p></div>
           <button className={`toggle ${settings.n8nEnabled ? "on" : ""}`} onClick={() => update("n8nEnabled")} aria-pressed={settings.n8nEnabled}><span /></button>
         </div>
       </section>
