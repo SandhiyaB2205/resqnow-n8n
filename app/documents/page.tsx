@@ -5,13 +5,16 @@ import Link from "next/link"
 import { motion } from "framer-motion"
 import {
   ArrowLeft, Check, Clock3, FileText, HeartPulse, Info, Lightbulb, ScanLine, Send,
-  ShieldAlert, Upload,
+  ShieldAlert, Sparkles, Upload,
 } from "lucide-react"
 import {
-  buildMedicationTimeline, detectDuplicate, detectMissingInformation, explainMedication,
-  getDocuments, normalizeMedication, saveDocuments, type DocumentKind, type WalletDocument,
+  buildHealthSummary, buildMedicationTimeline, correctAndResubmit, detectConflicts,
+  detectDuplicate, detectMissingInformation, explainMedication, getDocuments,
+  normalizeMedication, saveDocuments, type DocumentKind, type WalletDocument,
 } from "../../lib/platform"
 import { emitN8nEvent } from "../../lib/n8n"
+import { loadProfile } from "../../lib/storage"
+import { mockProfile } from "../../lib/mock-data"
 
 const KINDS: DocumentKind[] = ["Prescription", "Lab Report", "Discharge Summary", "Medical Certificate", "Other"]
 const ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.heic"
@@ -27,9 +30,13 @@ export default function DocumentsPage() {
   const [fileSize, setFileSize] = useState(0)
   const [kind, setKind] = useState<DocumentKind>("Prescription")
   const [openExplainer, setOpenExplainer] = useState<string | null>(null)
+  const [profile, setProfile] = useState(mockProfile)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { setDocs(getDocuments()) }, [])
+  useEffect(() => {
+    setDocs(getDocuments())
+    setProfile(loadProfile(mockProfile))
+  }, [])
 
   const persist = (next: WalletDocument[]) => { setDocs(next); saveDocuments(next) }
 
@@ -46,6 +53,8 @@ export default function DocumentsPage() {
   }, [docs])
   const timeline = useMemo(() => buildMedicationTimeline(docs), [docs])
   const flags = useMemo(() => detectMissingInformation(docs), [docs])
+  const conflicts = useMemo(() => detectConflicts(docs), [docs])
+  const summary = useMemo(() => buildHealthSummary(docs, { allergies: profile.allergies, medications: profile.medications, conditions: profile.conditions }), [docs, profile])
 
   const onPick = (file: File | null) => {
     setError("")
@@ -160,6 +169,16 @@ export default function DocumentsPage() {
         {notice && <p className="form-note ok"><Check size={13} /> {notice}</p>}
       </section>
 
+      {conflicts.length > 0 && (
+        <section className="card assess-uncertain" role="alert">
+          <ShieldAlert size={15} />
+          <div>
+            <strong>Medical conflicts detected — provider review required</strong>
+            <ul className="flag-list">{conflicts.map((flag) => <li key={flag.id}>{flag.message}</li>)}</ul>
+          </div>
+        </section>
+      )}
+
       {flags.length > 0 && (
         <section className="card assess-uncertain" role="status">
           <Lightbulb size={15} />
@@ -191,6 +210,19 @@ export default function DocumentsPage() {
               )}
             </div>
           ))}
+        </section>
+      )}
+
+      {summary.medications.length > 0 && (
+        <section className="card panel">
+          <div className="panel-heading"><div><h2>AI health summary</h2><p>Built only from your verified records — informational, never a diagnosis.</p></div><Sparkles size={18} className="verified" /></div>
+          <div className="summary-grid">
+            <div><small>Current medications</small><strong>{summary.medications.join(" · ")}</strong></div>
+            <div><small>Known allergies</small><strong>{summary.allergies.length ? summary.allergies.join(" · ") : "none recorded"}</strong></div>
+            <div><small>Verified conditions</small><strong>{summary.conditions.length ? summary.conditions.join(" · ") : "none recorded"}</strong></div>
+            <div><small>Recent records</small><strong>{summary.recentEvents.length ? summary.recentEvents.slice(0, 3).join(" · ") : "nothing verified yet"}</strong></div>
+          </div>
+          <small className="form-note">AI-generated summary · {new Date(summary.generatedAt).toLocaleString()} · verify with your provider</small>
         </section>
       )}
 
@@ -228,8 +260,8 @@ export default function DocumentsPage() {
           >
             <div className="doc-head">
               <span className="record-icon"><FileText size={17} /></span>
-              <div className="doc-title"><strong>{doc.title}</strong><small>{doc.kind} · {new Date(doc.uploadedAt).toLocaleString()}</small></div>
-              <span className={`status-pill ${doc.stage === "VERIFIED" ? "" : doc.stage === "NEEDS_QUALITY" ? "revoked" : "muted"}`}>{doc.stage.replace("_", " ")}</span>
+              <div className="doc-title"><strong>{doc.title} {doc.version && doc.version > 1 ? <span className="version-chip">v{doc.version}</span> : null}</strong><small>{doc.kind} · {new Date(doc.uploadedAt).toLocaleString()}</small></div>
+              <span className={`status-pill ${doc.stage === "VERIFIED" ? "" : doc.stage === "NEEDS_QUALITY" || doc.stage === "REJECTED" ? "revoked" : "muted"}`}>{doc.stage.replace("_", " ")}</span>
             </div>
             {doc.qualityNotes.length > 0 && <div className="assess-uncertain"><ShieldAlert size={14} /> {doc.qualityNotes.join(" · ")}</div>}
             <div className="doc-fields">
@@ -247,7 +279,17 @@ export default function DocumentsPage() {
                 <button className="btn primary" onClick={() => sendForVerification(doc)}><Send size={15} /> Send for verification</button>
               </div>
             )}
+            {doc.stage === "CORRECTION_REQUESTED" && (
+              <div className="modal-actions">
+                <button className="btn primary" onClick={() => {
+                  persist(correctAndResubmit(getDocuments(), doc.id, doc.fields))
+                  void emitN8nEvent({ event: "document.submitted", source: "documents-page", payload: { documentId: doc.id, correctedVersion: true } })
+                  setNotice("Corrected version submitted — back in the verification queue.")
+                }}><Send size={15} /> Submit corrected version (v{(doc.version ?? 1) + 1})</button>
+              </div>
+            )}
             {doc.stage === "REVIEWED" && <p className="form-note">Awaiting verification — a provider reviews the original against the extraction.</p>}
+            {doc.stage === "REJECTED" && <p className="form-note bad"><ShieldAlert size={13} /> Rejected by the provider{doc.qualityNotes[0] ? `: ${doc.qualityNotes[0]}` : "."} Correct the fields and resubmit.</p>}
             {doc.stage === "VERIFIED" && <p className="form-note ok"><Check size={13} /> Verified record — added to your health wallet history.</p>}
           </motion.div>
         ))}

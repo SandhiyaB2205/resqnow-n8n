@@ -1,5 +1,5 @@
 import { getStored, setStored, removeStored } from "./storage"
-import type { PatientProfile } from "./types"
+import type { AuditEvent, Consent, PatientProfile } from "./types"
 
 /* ================= Emergency coordination ================= */
 
@@ -146,11 +146,17 @@ export interface WalletDocument {
   kind: DocumentKind
   uploadedAt: string
   /** extraction stage: queued → extracted → reviewed → verified | needs-quality */
-  stage: "QUEUED" | "EXTRACTED" | "REVIEWED" | "VERIFIED" | "NEEDS_QUALITY"
+  stage: "QUEUED" | "EXTRACTED" | "REVIEWED" | "VERIFIED" | "NEEDS_QUALITY" | "REJECTED" | "CORRECTION_REQUESTED"
   fields: ExtractedField[]
   qualityNotes: string[]
   /** patient's chance to correct OCR mistakes before verification */
   patientCorrections?: number
+  /** document versioning: v1, v2, ... bumped when a rejected doc is corrected */
+  version?: number
+  /** id of the previous version of this document */
+  previousVersionId?: string
+  /** provider decision trail */
+  verificationHistory?: { at: string; action: "submitted" | "verified" | "rejected" | "correction_requested"; by: string; note?: string }[]
 }
 
 const DOCS_KEY = "resq-documents"
@@ -302,6 +308,159 @@ export function buildMedicationTimeline(docs: WalletDocument[]): TimelineEntry[]
       documentId: doc.id,
     }))
     .sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
+}
+
+/* ================= Doctor verification portal ================= */
+
+export function getVerificationQueue(docs: WalletDocument[]): WalletDocument[] {
+  return docs.filter((doc) => doc.stage === "REVIEWED")
+}
+
+export function decideVerification(
+  docs: WalletDocument[],
+  docId: string,
+  action: "verify" | "reject" | "correct",
+  providerName: string,
+  note?: string,
+): WalletDocument[] {
+  const at = new Date().toISOString()
+  return docs.map((doc) => {
+    if (doc.id !== docId) return doc
+    const stage: WalletDocument["stage"] = action === "verify" ? "VERIFIED" : action === "reject" ? "REJECTED" : "CORRECTION_REQUESTED"
+    const history = [...(doc.verificationHistory ?? []), { at, action: action === "verify" ? "verified" as const : action === "reject" ? "rejected" as const : "correction_requested" as const, by: providerName, note }]
+    return { ...doc, stage, qualityNotes: action === "reject" && note ? [note] : doc.qualityNotes, verificationHistory: history }
+  })
+}
+
+/** Patient resubmits a corrected version — bumps the version, links history. */
+export function correctAndResubmit(docs: WalletDocument[], docId: string, fields: WalletDocument["fields"]): WalletDocument[] {
+  const source = docs.find((doc) => doc.id === docId)
+  if (!source) return docs
+  const at = new Date().toISOString()
+  const corrected: WalletDocument = {
+    ...source,
+    id: `doc-${Date.now().toString(36)}`,
+    uploadedAt: at,
+    stage: "REVIEWED",
+    fields,
+    version: (source.version ?? 1) + 1,
+    previousVersionId: source.id,
+    patientCorrections: (source.patientCorrections ?? 0) + 1,
+    qualityNotes: [],
+    verificationHistory: [...(source.verificationHistory ?? []), { at, action: "submitted" as const, by: "You", note: `v${(source.version ?? 1) + 1} submitted after correction` }],
+  }
+  return docs.map((doc) => doc.id === docId ? { ...doc, verificationHistory: [...(doc.verificationHistory ?? []), { at, action: "submitted" as const, by: "You", note: "superseded by corrected version" }] } : doc).concat([corrected])
+}
+
+/* ================= AI health summary ================= */
+
+export interface HealthSummary {
+  medications: string[]
+  allergies: string[]
+  conditions: string[]
+  recentEvents: string[]
+  generatedAt: string
+}
+
+/** Summary ONLY from verified wallet data — clearly labeled AI-generated, never diagnoses. */
+export function buildHealthSummary(docs: WalletDocument[], profile: { allergies: string[]; medications: string[]; conditions: string[] }): HealthSummary {
+  const verified = docs.filter((doc) => doc.stage === "VERIFIED")
+  const meds = verified.filter((doc) => doc.kind === "Prescription").map((doc) => doc.fields.find((field) => field.label === "Medicine")?.value.trim()).filter((value): value is string => Boolean(value))
+  const recent = verified.slice(0, 5).map((doc) => `${doc.kind}: ${doc.title} (${new Date(doc.uploadedAt).toLocaleDateString()})`)
+  return {
+    medications: Array.from(new Set([...profile.medications.filter(Boolean), ...meds])),
+    allergies: profile.allergies.filter(Boolean),
+    conditions: profile.conditions.filter(Boolean),
+    recentEvents: recent,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+/* ================= Medical conflict detection ================= */
+
+export interface ConflictFlag {
+  id: string
+  severity: "warning"
+  message: string
+  docs: [string, string]
+}
+
+/** Two verified docs contradicting each other -> flag for provider review (never auto-resolved). */
+export function detectConflicts(docs: WalletDocument[]): ConflictFlag[] {
+  const verified = docs.filter((doc) => doc.stage === "VERIFIED")
+  const conflicts: ConflictFlag[] = []
+  for (const kind of ["Prescription", "Lab Report"] as DocumentKind[]) {
+    const group = verified.filter((doc) => doc.kind === kind)
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        const a = group[i]
+        const b = group[j]
+        for (const label of ["Allergies", "Medicine", "Diagnosis"]) {
+          const va = a.fields.find((field) => field.label === label)?.value.trim().toLowerCase()
+          const vb = b.fields.find((field) => field.label === label)?.value.trim().toLowerCase()
+          if (va && vb && va !== vb && (va.includes("none") !== vb.includes("none"))) {
+            conflicts.push({
+              id: `${a.id}-${b.id}-${label}`,
+              severity: "warning",
+              message: `"${label}" differs between "${a.title}" ("${va}") and "${b.title}" ("${vb}") — provider review required`,
+              docs: [a.id, b.id],
+            })
+          }
+        }
+      }
+    }
+  }
+  return conflicts
+}
+
+/* ================= Consent lifecycle sweep ================= */
+
+/** Expire stale temporary access (30-min emergency windows, timed consents). */
+export function expireStaleConsents(): number {
+  const consents = getStored<Consent[]>("resqnow:consents", [])
+  let changed = 0
+  const now = Date.now()
+  const next = consents.map((consent) => {
+    if (consent.status === "ACTIVE" && new Date(consent.expiresAt).getTime() < now) {
+      changed++
+      return { ...consent, status: "EXPIRED" as const }
+    }
+    return consent
+  })
+  if (changed) setStored("resqnow:consents", next)
+  return changed
+}
+
+/** Consent expiring within 24h (for expiry warnings). */
+export function consentsExpiringSoon(): Consent[] {
+  const consents = getStored<Consent[]>("resqnow:consents", [])
+  const cutoff = Date.now() + 24 * 60 * 60 * 1000
+  return consents.filter((consent) => consent.status === "ACTIVE" && new Date(consent.expiresAt).getTime() < cutoff)
+}
+
+/* ================= Suspicious access detection ================= */
+
+export interface AccessAnomaly {
+  id: string
+  message: string
+  at: string
+}
+
+/** Real audit analysis: >4 provider accesses in 5 minutes -> security flag. */
+export function detectAccessAnomalies(audit: AuditEvent[]): AccessAnomaly[] {
+  const providerActions = audit.filter((item) => /provider|hospital|care team|dr\./i.test(item.actor))
+  const anomalies: AccessAnomaly[] = []
+  const WINDOW = 5 * 60 * 1000
+  for (let i = 0; i < providerActions.length; i++) {
+    const cluster = providerActions.filter((item) => Math.abs(new Date(item.time).getTime() - new Date(providerActions[i].time).getTime()) < WINDOW)
+    if (cluster.length > 4) {
+      const at = providerActions[i].time
+      if (!anomalies.some((existing) => existing.at === at)) {
+        anomalies.push({ id: `anomaly-${i}`, message: `${cluster.length} provider accesses within 5 minutes — unusual pattern, review required`, at })
+      }
+    }
+  }
+  return anomalies.slice(0, 3)
 }
 
 /* ================= Provider access requests ================= */

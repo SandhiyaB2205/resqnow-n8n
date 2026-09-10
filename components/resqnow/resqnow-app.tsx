@@ -33,6 +33,7 @@ const quickLinks = [
   { href: "/emergency-center", label: "Emergency Center", icon: Siren, tone: "peach" },
   { href: "/documents", label: "Upload & extract", icon: FileText, tone: "mint" },
   { href: "/requests", label: "Access requests", icon: ShieldCheck, tone: "blue" },
+  { href: "/verify", label: "Provider verification", icon: Stethoscope, tone: "violet" },
 ] as const
 type ViewId = (typeof nav)[number]["id"] | "settings" | "doctor"
 
