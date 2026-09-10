@@ -1,0 +1,108 @@
+{
+  "name": "RESQNOW — Consent lifecycle automation",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "consent-lifecycle", "responseMode": "responseNode", "options": {} },
+      "id": "wh-consent",
+      "name": "Consent webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-200, 0],
+      "webhookId": "resqnow-consent-lifecycle"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.body.event }}", "rightValue": "consent.revoked", "operator": { "type": "string", "operation": "equals" } }
+          ]
+        },
+        "options": {}
+      },
+      "id": "if-revoked",
+      "name": "Revoked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [40, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "r1", "name": "action", "value": "REVOKE_ACCESS", "type": "string" },
+            { "id": "r2", "name": "provider", "value": "={{ $json.body.payload?.providerName }}", "type": "string" },
+            { "id": "r3", "name": "scopes", "value": "={{ JSON.stringify($json.body.payload?.scopes || []) }}", "type": "string" },
+            { "id": "r4", "name": "note", "value": "Provider access cut immediately; unshare confirmed to RESQNOW.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-revoke",
+      "name": "Revoke provider access",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [280, -100]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "g1", "name": "action", "value": "GRANT_ACCESS", "type": "string" },
+            { "id": "g2", "name": "provider", "value": "={{ $json.body.payload?.providerName }}", "type": "string" },
+            { "id": "g3", "name": "purpose", "value": "={{ $json.body.payload?.purpose }}", "type": "string" },
+            { "id": "g4", "name": "note", "value": "Consent window validated; expiry schedule acknowledged.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-grant",
+      "name": "Grant & schedule expiry",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [280, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/n8n/callback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'consent-lifecycle', status: 'success', action: $json.action, provider: $json.provider }) }}",
+        "options": {}
+      },
+      "id": "http-consent-ack",
+      "name": "Acknowledge to RESQNOW",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, workflow: 'consent-lifecycle', action: $json.action, note: $json.note }) }}",
+        "options": {}
+      },
+      "id": "respond-consent",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [760, 0]
+    }
+  ],
+  "connections": {
+    "Consent webhook": { "main": [[{ "node": "Revoked?", "type": "main", "index": 0 }]] },
+    "Revoked?": { "main": [
+      [{ "node": "Revoke provider access", "type": "main", "index": 0 }],
+      [{ "node": "Grant & schedule expiry", "type": "main", "index": 0 }]
+    ] },
+    "Revoke provider access": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Grant & schedule expiry": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Acknowledge to RESQNOW": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "instanceId": "resqnow-demo" }
+}

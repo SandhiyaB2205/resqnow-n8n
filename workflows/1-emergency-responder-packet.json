@@ -1,0 +1,69 @@
+{
+  "name": "RESQNOW — Emergency QR responder packet",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "emergency-access", "responseMode": "responseNode", "options": {} },
+      "id": "wh-emergency",
+      "name": "QR scan webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-200, 0],
+      "webhookId": "resqnow-emergency-access"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "f1", "name": "patient", "value": "={{ $json.body.payload?.patient || $json.body.patient || 'Unknown' }}", "type": "string" },
+            { "id": "f2", "name": "bloodGroup", "value": "={{ $json.body.payload?.bloodGroup || $json.body.bloodGroup || 'Unknown' }}", "type": "string" },
+            { "id": "f3", "name": "route", "value": "={{ $json.body.payload?.route || '/emergency-access' }}", "type": "string" },
+            { "id": "f4", "name": "packet", "value": "Read-only critical profile: blood group, allergies, medications, conditions, emergency contact", "type": "string" },
+            { "id": "f5", "name": "deliveredAt", "value": "={{ $now.toISO() }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-packet",
+      "name": "Build responder packet",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [40, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/n8n/callback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'emergency-responder-packet', status: 'success', patient: $json.patient, deliveredAt: $json.deliveredAt }) }}",
+        "options": {}
+      },
+      "id": "http-ack",
+      "name": "Acknowledge to RESQNOW",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [300, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, workflow: 'emergency-responder-packet', packet: $json.packet }) }}",
+        "options": {}
+      },
+      "id": "respond-emergency",
+      "name": "Respond to scan",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [540, 0]
+    }
+  ],
+  "connections": {
+    "QR scan webhook": { "main": [[{ "node": "Build responder packet", "type": "main", "index": 0 }]] },
+    "Build responder packet": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Acknowledge to RESQNOW": { "main": [[{ "node": "Respond to scan", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "instanceId": "resqnow-demo" }
+}

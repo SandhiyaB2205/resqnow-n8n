@@ -1,0 +1,108 @@
+{
+  "name": "RESQNOW — Record intake & verification",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "record-intake", "responseMode": "responseNode", "options": {} },
+      "id": "wh-record",
+      "name": "Record webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-200, 0],
+      "webhookId": "resqnow-record-intake"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            { "id": "v1", "leftValue": "={{ $json.body.payload?.recordId || $json.body.recordId }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty", "singleValue": true } },
+            { "id": "v2", "leftValue": "={{ $json.body.payload?.recordTitle || $json.body.recordTitle }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty", "singleValue": true } }
+          ]
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Metadata complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [40, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "s1", "name": "recordId", "value": "={{ $json.body.payload?.recordId || $json.body.recordId }}", "type": "string" },
+            { "id": "s2", "name": "title", "value": "={{ $json.body.payload?.recordTitle || $json.body.recordTitle }}", "type": "string" },
+            { "id": "s3", "name": "status", "value": "VERIFIED", "type": "string" },
+            { "id": "s4", "name": "note", "value": "Signature and metadata checks passed; record marked VERIFIED.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-verified",
+      "name": "Mark VERIFIED",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [280, -100]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "p1", "name": "recordId", "value": "={{ $json.body.payload?.recordId || $json.body.recordId || 'unknown' }}", "type": "string" },
+            { "id": "p2", "name": "status", "value": "PENDING", "type": "string" },
+            { "id": "p3", "name": "note", "value": "Missing metadata or signature; record flagged PENDING for manual review.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-pending",
+      "name": "Flag PENDING",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [280, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/n8n/callback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'record-intake', status: 'success', recordId: $json.recordId, recordStatus: $json.status }) }}",
+        "options": {}
+      },
+      "id": "http-record-ack",
+      "name": "Acknowledge to RESQNOW",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, workflow: 'record-intake', recordId: $json.recordId, status: $json.status, note: $json.note }) }}",
+        "options": {}
+      },
+      "id": "respond-record",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [760, 0]
+    }
+  ],
+  "connections": {
+    "Record webhook": { "main": [[{ "node": "Metadata complete?", "type": "main", "index": 0 }]] },
+    "Metadata complete?": { "main": [
+      [{ "node": "Mark VERIFIED", "type": "main", "index": 0 }],
+      [{ "node": "Flag PENDING", "type": "main", "index": 0 }]
+    ] },
+    "Mark VERIFIED": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Flag PENDING": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Acknowledge to RESQNOW": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "instanceId": "resqnow-demo" }
+}

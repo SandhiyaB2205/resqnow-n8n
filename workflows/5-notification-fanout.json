@@ -1,0 +1,67 @@
+{
+  "name": "RESQNOW — Access notification fan-out",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "notify-access", "responseMode": "responseNode", "options": {} },
+      "id": "wh-notify",
+      "name": "Access webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-200, 0],
+      "webhookId": "resqnow-notify-access"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "n1", "name": "title", "value": "New access to your records", "type": "string" },
+            { "id": "n2", "name": "body", "value": "={{ $json.body.payload?.actor || 'A provider' }} — {{ $json.body.payload?.action || 'viewed shared data' }}", "type": "string" },
+            { "id": "n3", "name": "channel", "value": "in-app", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-notify",
+      "name": "Build notification",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [40, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/n8n/callback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'notification-fanout', status: 'success', title: $json.title, body: $json.body }) }}",
+        "options": {}
+      },
+      "id": "http-notify-ack",
+      "name": "Deliver to RESQNOW",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [280, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, workflow: 'notification-fanout', channel: $json.channel, title: $json.title }) }}",
+        "options": {}
+      },
+      "id": "respond-notify",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [520, 0]
+    }
+  ],
+  "connections": {
+    "Access webhook": { "main": [[{ "node": "Build notification", "type": "main", "index": 0 }]] },
+    "Build notification": { "main": [[{ "node": "Deliver to RESQNOW", "type": "main", "index": 0 }]] },
+    "Deliver to RESQNOW": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "instanceId": "resqnow-demo" }
+}

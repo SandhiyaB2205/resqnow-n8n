@@ -1,1 +1,5 @@
-export { default } from "../page"
+import ResqnowApp from "../../components/resqnow/resqnow-app"
+
+export default function AccessHistoryPage() {
+  return <ResqnowApp initialView="history" />
+}

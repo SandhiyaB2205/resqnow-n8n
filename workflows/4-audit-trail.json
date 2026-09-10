@@ -1,0 +1,52 @@
+{
+  "name": "RESQNOW — Audit trail writer",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "audit-trail", "responseMode": "responseNode", "options": {} },
+      "id": "wh-audit",
+      "name": "Audit webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-200, 0],
+      "webhookId": "resqnow-audit-trail"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "actor", "value": "={{ $json.body.payload?.actor || $json.body.source || 'system' }}", "type": "string" },
+            { "id": "a2", "name": "action", "value": "={{ $json.body.payload?.action || $json.body.event }}", "type": "string" },
+            { "id": "a3", "name": "loggedAt", "value": "={{ $now.toISO() }}", "type": "string" },
+            { "id": "a4", "name": "entry", "value": "={{ $json.body.payload?.actor || 'system' }} — {{ $json.body.payload?.action || $json.body.event }} @ {{ $now.toISO() }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-entry",
+      "name": "Compose audit entry",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [40, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, workflow: 'audit-trail', entry: $json.entry }) }}",
+        "options": {}
+      },
+      "id": "respond-audit",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [280, 0]
+    }
+  ],
+  "connections": {
+    "Audit webhook": { "main": [[{ "node": "Compose audit entry", "type": "main", "index": 0 }]] },
+    "Compose audit entry": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "instanceId": "resqnow-demo" }
+}

@@ -1,0 +1,68 @@
+{
+  "name": "RESQNOW — Document OCR & verification",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "document-processing", "responseMode": "responseNode", "options": {} },
+      "id": "wh-document",
+      "name": "Document webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-260, 0],
+      "webhookId": "resqnow-document-processing"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "d1", "name": "documentId", "value": "={{ $json.body.payload?.documentId || 'unknown' }}", "type": "string" },
+            { "id": "d2", "name": "kind", "value": "={{ $json.body.payload?.kind || 'Other' }}", "type": "string" },
+            { "id": "d3", "name": "stage", "value": "OCR_QUEUED", "type": "string" },
+            { "id": "d4", "name": "note", "value": "Attach your OCR node (e.g. Google Cloud Vision / Mindee / Mistral OCR) below, then an AI structuring node. Results POST back to /api/n8n/callback with documentId + extracted fields. The app NEVER auto-verifies AI output — a provider verifies.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-ocr",
+      "name": "Queue OCR",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/n8n/callback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'document-ocr', status: 'success', documentId: $json.documentId, stage: $json.stage, note: $json.note }) }}",
+        "options": {}
+      },
+      "id": "http-doc-ack",
+      "name": "Acknowledge to RESQNOW",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [280, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, workflow: 'document-ocr', documentId: $json.documentId, stage: $json.stage }) }}",
+        "options": {}
+      },
+      "id": "respond-doc",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [520, 0]
+    }
+  ],
+  "connections": {
+    "Document webhook": { "main": [[{ "node": "Queue OCR", "type": "main", "index": 0 }]] },
+    "Queue OCR": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Acknowledge to RESQNOW": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "instanceId": "resqnow-demo" }
+}

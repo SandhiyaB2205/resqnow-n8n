@@ -1,0 +1,126 @@
+{
+  "name": "RESQNOW — Emergency coordination",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "emergency-coordination", "responseMode": "responseNode", "options": {} },
+      "id": "wh-emergency-coordination",
+      "name": "Emergency webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-260, 0],
+      "webhookId": "resqnow-emergency-coordination"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            { "conditions": { "options": { "caseSensitive": true, "version": 2 }, "combinator": "and", "conditions": [{ "id": "r1", "leftValue": "={{ $json.body.event }}", "rightValue": "emergency.started", "operator": { "type": "string", "operation": "equals" } }] }, "outputKey": "started" },
+            { "conditions": { "options": { "caseSensitive": true, "version": 2 }, "combinator": "and", "conditions": [{ "id": "r2", "leftValue": "={{ $json.body.event }}", "rightValue": "hospital.accepted", "operator": { "type": "string", "operation": "equals" } }] }, "outputKey": "accepted" },
+            { "conditions": { "options": { "caseSensitive": true, "version": 2 }, "combinator": "and", "conditions": [{ "id": "r3", "leftValue": "={{ $json.body.event }}", "rightValue": "ambulance.assigned", "operator": { "type": "string", "operation": "equals" } }] }, "outputKey": "ambulance" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-event",
+      "name": "Route by event",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [-20, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "s1", "name": "caseCode", "value": "={{ $json.body.payload?.caseCode || 'unknown' }}", "type": "string" },
+            { "id": "s2", "name": "priority", "value": "={{ $json.body.payload?.priority || 'UNKNOWN' }}", "type": "string" },
+            { "id": "s3", "name": "action", "value": "COORDINATE", "type": "string" },
+            { "id": "s4", "name": "note", "value": "Triage acknowledged. Hospital capability matching and ambulance coordination start here (HTTP nodes to hospital/ambulance systems attach below).", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-started",
+      "name": "Start coordination",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, -200]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "a1", "name": "hospital", "value": "={{ $json.body.payload?.hospital || 'unknown' }}", "type": "string" },
+            { "id": "a2", "name": "action", "value": "PRE_ALERT", "type": "string" },
+            { "id": "a3", "name": "note", "value": "Trauma team and emergency department pre-alert sent; resus bay preparation requested.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-accepted",
+      "name": "Hospital pre-alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "b1", "name": "unit", "value": "={{ $json.body.payload?.unit || 'unknown' }}", "type": "string" },
+            { "id": "b2", "name": "action", "value": "AMBULANCE_SYNC", "type": "string" },
+            { "id": "b3", "name": "note", "value": "Ambulance assigned; ETA shared with the accepting hospital.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-ambulance",
+      "name": "Sync ambulance ETA",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/n8n/callback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'emergency-coordination', status: 'success', action: $json.action, note: $json.note }) }}",
+        "options": {}
+      },
+      "id": "http-ack-emergency",
+      "name": "Acknowledge to RESQNOW",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, workflow: 'emergency-coordination', action: $json.action, note: $json.note }) }}",
+        "options": {}
+      },
+      "id": "respond-emergency-coordination",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [740, 0]
+    }
+  ],
+  "connections": {
+    "Emergency webhook": { "main": [[{ "node": "Route by event", "type": "main", "index": 0 }]] },
+    "Route by event": { "main": [
+      [{ "node": "Start coordination", "type": "main", "index": 0 }],
+      [{ "node": "Hospital pre-alert", "type": "main", "index": 0 }],
+      [{ "node": "Sync ambulance ETA", "type": "main", "index": 0 }]
+    ] },
+    "Start coordination": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Hospital pre-alert": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Sync ambulance ETA": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Acknowledge to RESQNOW": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "instanceId": "resqnow-demo" }
+}

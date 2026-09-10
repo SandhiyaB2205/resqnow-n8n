@@ -1,0 +1,141 @@
+{
+  "name": "RESQNOW — Consent & access requests",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "access-requests", "responseMode": "responseNode", "options": {} },
+      "id": "wh-access",
+      "name": "Access webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-260, 0],
+      "webhookId": "resqnow-access-requests"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            { "conditions": { "options": { "caseSensitive": true, "version": 2 }, "combinator": "and", "conditions": [{ "id": "c1", "leftValue": "={{ $json.body.event }}", "rightValue": "access.requested", "operator": { "type": "string", "operation": "equals" } }] }, "outputKey": "requested" },
+            { "conditions": { "options": { "caseSensitive": true, "version": 2 }, "combinator": "and", "conditions": [{ "id": "c2", "leftValue": "={{ $json.body.event }}", "rightValue": "access.approved", "operator": { "type": "string", "operation": "equals" } }] }, "outputKey": "approved" },
+            { "conditions": { "options": { "caseSensitive": true, "version": 2 }, "combinator": "and", "conditions": [{ "id": "c3", "leftValue": "={{ $json.body.event }}", "rightValue": "access.denied", "operator": { "type": "string", "operation": "equals" } }] }, "outputKey": "denied" },
+            { "conditions": { "options": { "caseSensitive": true, "version": 2 }, "combinator": "and", "conditions": [{ "id": "c4", "leftValue": "={{ $json.body.event }}", "rightValue": "consent.revoked", "operator": { "type": "string", "operation": "equals" } }] }, "outputKey": "revoked" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-access",
+      "name": "Route by decision",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [-20, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "p1", "name": "action", "value": "NOTIFY_PATIENT", "type": "string" },
+            { "id": "p2", "name": "note", "value": "Patient wallet inbox receives ALLOW/DENY. Attach email/SMS nodes here for out-of-app alerts.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-requested",
+      "name": "Notify patient",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, -240]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "g1", "name": "action", "value": "ISSUE_GRANT", "type": "string" },
+            { "id": "g2", "name": "note", "value": "Scoped, time-limited grant issued. Expiry schedule (workflow 25/29) attaches here.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-approved",
+      "name": "Issue scoped grant",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, -80]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "n1", "name": "action", "value": "INFORM_PROVIDER", "type": "string" },
+            { "id": "n2", "name": "note", "value": "Provider informed of denial. No data released.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-denied",
+      "name": "Inform provider",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, 80]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "r1", "name": "action", "value": "REVOKE_IMMEDIATELY", "type": "string" },
+            { "id": "r2", "name": "note", "value": "Grant invalidated; audit written; provider notified.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-revoked",
+      "name": "Revoke grant",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/n8n/callback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'access-requests', status: 'success', action: $json.action, note: $json.note }) }}",
+        "options": {}
+      },
+      "id": "http-access-ack",
+      "name": "Acknowledge to RESQNOW",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, workflow: 'access-requests', action: $json.action }) }}",
+        "options": {}
+      },
+      "id": "respond-access",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [740, 0]
+    }
+  ],
+  "connections": {
+    "Access webhook": { "main": [[{ "node": "Route by decision", "type": "main", "index": 0 }]] },
+    "Route by decision": { "main": [
+      [{ "node": "Notify patient", "type": "main", "index": 0 }],
+      [{ "node": "Issue scoped grant", "type": "main", "index": 0 }],
+      [{ "node": "Inform provider", "type": "main", "index": 0 }],
+      [{ "node": "Revoke grant", "type": "main", "index": 0 }]
+    ] },
+    "Notify patient": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Issue scoped grant": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Inform provider": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Revoke grant": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Acknowledge to RESQNOW": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "instanceId": "resqnow-demo" }
+}

@@ -1,0 +1,104 @@
+{
+  "name": "RESQNOW — Emergency QR security",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "qr-security", "responseMode": "responseNode", "options": {} },
+      "id": "wh-qr",
+      "name": "QR webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-260, 0],
+      "webhookId": "resqnow-qr-security"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "version": 2 },
+          "combinator": "and",
+          "conditions": [
+            { "id": "q1", "leftValue": "={{ $json.body.event }}", "rightValue": "qr.scanned", "operator": { "type": "string", "operation": "equals" } }
+          ]
+        },
+        "options": {}
+      },
+      "id": "if-scan",
+      "name": "Is scan?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-20, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "qs1", "name": "action", "value": "AUDIT_SCAN", "type": "string" },
+            { "id": "qs2", "name": "note", "value": "Scan audited (who/when/purpose/data accessed). Rate limiting and suspicious-pattern detection attach here (workflows 65/66).", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-scan",
+      "name": "Audit scan",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, -100]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "qr1", "name": "action", "value": "TOKEN_ROTATED", "type": "string" },
+            { "id": "qr2", "name": "note", "value": "Token rotated; previous token invalid. Secure reference tokens only — no medical data in QR codes.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-rotation",
+      "name": "Rotate token",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/n8n/callback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'qr-security', status: 'success', action: $json.action }) }}",
+        "options": {}
+      },
+      "id": "http-qr-ack",
+      "name": "Acknowledge to RESQNOW",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, workflow: 'qr-security', action: $json.action }) }}",
+        "options": {}
+      },
+      "id": "respond-qr",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [740, 0]
+    }
+  ],
+  "connections": {
+    "QR webhook": { "main": [[{ "node": "Is scan?", "type": "main", "index": 0 }]] },
+    "Is scan?": { "main": [
+      [{ "node": "Audit scan", "type": "main", "index": 0 }],
+      [{ "node": "Rotate token", "type": "main", "index": 0 }]
+    ] },
+    "Audit scan": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Rotate token": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Acknowledge to RESQNOW": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "instanceId": "resqnow-demo" }
+}

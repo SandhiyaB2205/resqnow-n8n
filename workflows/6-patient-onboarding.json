@@ -1,0 +1,67 @@
+{
+  "name": "RESQNOW — Patient onboarding flow",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "patient-onboarding", "responseMode": "responseNode", "options": {} },
+      "id": "wh-onboarding",
+      "name": "Signup webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-200, 0],
+      "webhookId": "resqnow-patient-onboarding"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "o1", "name": "email", "value": "={{ $json.body.payload?.email || 'unknown' }}", "type": "string" },
+            { "id": "o2", "name": "provisioned", "value": "Emergency QR provisioned · demo records seeded · starter consent created", "type": "string" },
+            { "id": "o3", "name": "welcomeAt", "value": "={{ $now.toISO() }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-provision",
+      "name": "Provision wallet",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [40, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/n8n/callback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'patient-onboarding', status: 'success', email: $json.email, provisioned: $json.provisioned }) }}",
+        "options": {}
+      },
+      "id": "http-onboard-ack",
+      "name": "Acknowledge to RESQNOW",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [280, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, workflow: 'patient-onboarding', provisioned: $json.provisioned }) }}",
+        "options": {}
+      },
+      "id": "respond-onboard",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [520, 0]
+    }
+  ],
+  "connections": {
+    "Signup webhook": { "main": [[{ "node": "Provision wallet", "type": "main", "index": 0 }]] },
+    "Provision wallet": { "main": [[{ "node": "Acknowledge to RESQNOW", "type": "main", "index": 0 }]] },
+    "Acknowledge to RESQNOW": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "instanceId": "resqnow-demo" }
+}

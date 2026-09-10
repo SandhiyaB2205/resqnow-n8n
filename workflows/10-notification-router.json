@@ -1,0 +1,106 @@
+{
+  "name": "RESQNOW — Notification router",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "notification-router", "responseMode": "responseNode", "options": {} },
+      "id": "wh-notify-router",
+      "name": "Notification webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-260, 0],
+      "webhookId": "resqnow-notification-router"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            { "conditions": { "options": { "caseSensitive": true, "version": 2 }, "combinator": "and", "conditions": [{ "id": "n1", "leftValue": "={{ $json.body.payload?.audience }}", "rightValue": "patient", "operator": { "type": "string", "operation": "equals" } }] }, "outputKey": "patient" },
+            { "conditions": { "options": { "caseSensitive": true, "version": 2 }, "combinator": "and", "conditions": [{ "id": "n2", "leftValue": "={{ $json.body.payload?.audience }}", "rightValue": "provider", "operator": { "type": "string", "operation": "equals" } }] }, "outputKey": "provider" },
+            { "conditions": { "options": { "caseSensitive": true, "version": 2 }, "combinator": "and", "conditions": [{ "id": "n3", "leftValue": "={{ $json.body.payload?.audience }}", "rightValue": "hospital", "operator": { "type": "string", "operation": "equals" } }] }, "outputKey": "hospital" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-audience",
+      "name": "Route by audience",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [-20, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "pa1", "name": "channel", "value": "wallet-inbox", "type": "string" },
+            { "id": "pa2", "name": "note", "value": "Written to the wallet inbox (already persisted via /api/notifications). Attach email/push nodes for out-of-app delivery.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-patient",
+      "name": "Patient inbox",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, -160]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "pr1", "name": "channel", "value": "email", "type": "string" },
+            { "id": "pr2", "name": "note", "value": "Verification requests, approvals and incoming emergencies. Attach Gmail/SMTP node here.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-provider",
+      "name": "Provider channels",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "h1", "name": "channel", "value": "hospital-desk", "type": "string" },
+            { "id": "h2", "name": "note", "value": "Incoming emergencies, ETA changes, ambulance dispatch. Attach hospital system webhook/email here.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-hospital",
+      "name": "Hospital channels",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [240, 160]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, workflow: 'notification-router', channel: $json.channel, note: $json.note }) }}",
+        "options": {}
+      },
+      "id": "respond-notify",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [500, 0]
+    }
+  ],
+  "connections": {
+    "Notification webhook": { "main": [[{ "node": "Route by audience", "type": "main", "index": 0 }]] },
+    "Route by audience": { "main": [
+      [{ "node": "Patient inbox", "type": "main", "index": 0 }],
+      [{ "node": "Provider channels", "type": "main", "index": 0 }],
+      [{ "node": "Hospital channels", "type": "main", "index": 0 }]
+    ] },
+    "Patient inbox": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "Provider channels": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "Hospital channels": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "instanceId": "resqnow-demo" }
+}
