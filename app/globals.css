@@ -815,3 +815,128 @@ body::after {
   .consent-visual:hover, .consent-visual:hover .mini-consent,
   .consent-visual:hover .ward-photo { transform: none; }
 }
+
+/* ================= EVERYTHING 3D — global depth pass ================= */
+
+/* Every card lifts and tilts toward the viewer on hover */
+.card {
+  transition: transform 0.28s cubic-bezier(0.22, 0.9, 0.3, 1), box-shadow 0.28s ease, border-color 0.28s ease;
+}
+.main .card:hover,
+.standalone-content .card:hover {
+  transform: perspective(900px) translateY(-4px) rotateX(1.6deg);
+  box-shadow: 0 26px 48px -20px rgba(15, 46, 62, 0.38), 0 10px 20px -12px rgba(15, 46, 62, 0.22);
+}
+.main .card:active,
+.standalone-content .card:active {
+  transform: perspective(900px) translateY(-1px) scale(0.995);
+}
+
+/* Icons and avatars float above their card surface */
+.stat-icon,
+.record-icon,
+.provider-icon,
+.workflow-icon {
+  transform: translateZ(24px);
+  transition: transform 0.25s ease;
+}
+.card:hover .stat-icon,
+.card:hover .record-icon,
+.card:hover .provider-icon,
+.card:hover .workflow-icon {
+  transform: translateZ(40px) scale(1.08);
+}
+
+/* Rows slide forward in 3D on hover */
+.record-row,
+.consent-row,
+.activity-row,
+.setting-row {
+  transition: transform 0.22s ease, background 0.22s ease, box-shadow 0.22s ease;
+}
+.record-row:hover,
+.consent-row:hover,
+.activity-row:hover {
+  transform: perspective(700px) translateX(4px) translateZ(10px);
+  box-shadow: -6px 10px 24px -14px rgba(15, 46, 62, 0.35);
+}
+
+/* Inputs & selects rise on focus */
+input:focus, select:focus, textarea:focus {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px -12px rgba(20, 160, 160, 0.5);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Status pills get a tiny emboss */
+.status-pill {
+  transform: translateZ(6px);
+}
+
+/* Standalone pages: staggered 3D entrance for every top-level block */
+.standalone-content > * {
+  animation: page-enter-3d 0.6s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+.standalone-content > *:nth-child(1) { animation-delay: 0.02s; }
+.standalone-content > *:nth-child(2) { animation-delay: 0.08s; }
+.standalone-content > *:nth-child(3) { animation-delay: 0.14s; }
+.standalone-content > *:nth-child(4) { animation-delay: 0.2s; }
+.standalone-content > *:nth-child(5) { animation-delay: 0.26s; }
+.standalone-content > *:nth-child(6) { animation-delay: 0.32s; }
+@keyframes page-enter-3d {
+  from { opacity: 0; transform: perspective(1000px) translateY(26px) rotateX(-4deg); }
+  to { opacity: 1; transform: perspective(1000px) translateY(0) rotateX(0); }
+}
+
+/* In-app content blocks cascade in on every view switch */
+.content > * > * {
+  animation: block-enter 0.5s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+.content > * > *:nth-child(2) { animation-delay: 0.06s; }
+.content > * > *:nth-child(3) { animation-delay: 0.12s; }
+.content > * > *:nth-child(4) { animation-delay: 0.18s; }
+.content > * > *:nth-child(5) { animation-delay: 0.24s; }
+@keyframes block-enter {
+  from { opacity: 0; transform: translateY(18px) rotateX(-3deg); }
+  to { opacity: 1; transform: translateY(0) rotateX(0); }
+}
+
+/* Admin gate card floats */
+.admin-gate .auth-card {
+  animation: admin-float 6s ease-in-out infinite;
+}
+@keyframes admin-float {
+  0%, 100% { transform: perspective(900px) rotateX(0) translateY(0); }
+  50% { transform: perspective(900px) rotateX(2deg) translateY(-8px); }
+}
+
+/* Landing nav: glass depth */
+.landing-nav {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.landing-links a {
+  position: relative;
+  transition: transform 0.2s ease;
+}
+.landing-links a:hover {
+  transform: translateY(-2px);
+}
+
+/* Footer cards on landing rise as one */
+.landing-footer {
+  transition: transform 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .standalone-content > *,
+  .content > * > *,
+  .admin-gate .auth-card {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .main .card:hover, .standalone-content .card:hover,
+  .record-row:hover, .consent-row:hover, .activity-row:hover {
+    transform: none;
+  }
+}
