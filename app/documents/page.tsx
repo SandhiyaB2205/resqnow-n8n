@@ -1,10 +1,16 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import { motion } from "framer-motion"
-import { ArrowLeft, Check, FileText, HeartPulse, Send, ShieldAlert, Upload } from "lucide-react"
-import { getDocuments, saveDocuments, type DocumentKind, type WalletDocument } from "../../lib/platform"
+import {
+  ArrowLeft, Check, Clock3, FileText, HeartPulse, Info, Lightbulb, ScanLine, Send,
+  ShieldAlert, Upload,
+} from "lucide-react"
+import {
+  buildMedicationTimeline, detectDuplicate, detectMissingInformation, explainMedication,
+  getDocuments, normalizeMedication, saveDocuments, type DocumentKind, type WalletDocument,
+} from "../../lib/platform"
 import { emitN8nEvent } from "../../lib/n8n"
 
 const KINDS: DocumentKind[] = ["Prescription", "Lab Report", "Discharge Summary", "Medical Certificate", "Other"]
@@ -15,34 +21,46 @@ export default function DocumentsPage() {
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState("")
   const [error, setError] = useState("")
+  const [dupWarning, setDupWarning] = useState("")
   const [dragOver, setDragOver] = useState(false)
   const [fileName, setFileName] = useState("")
   const [fileSize, setFileSize] = useState(0)
   const [kind, setKind] = useState<DocumentKind>("Prescription")
+  const [openExplainer, setOpenExplainer] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { setDocs(getDocuments()) }, [])
 
   const persist = (next: WalletDocument[]) => { setDocs(next); saveDocuments(next) }
 
+  // Real wallet intelligence — derived from actual documents, never fabricated.
+  const medications = useMemo(() => {
+    return docs
+      .filter((doc) => doc.kind === "Prescription" && doc.stage === "VERIFIED")
+      .map((doc) => {
+        const value = (label: string) => doc.fields.find((field) => field.label === label)?.value.trim() ?? ""
+        const raw = [value("Medicine"), value("Strength"), value("Dosage"), value("Frequency"), value("Duration")].filter(Boolean).join(" ")
+        return raw ? { id: doc.id, title: doc.title, ...normalizeMedication(raw) } : null
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null)
+  }, [docs])
+  const timeline = useMemo(() => buildMedicationTimeline(docs), [docs])
+  const flags = useMemo(() => detectMissingInformation(docs), [docs])
+
   const onPick = (file: File | null) => {
     setError("")
     if (!file) return
-    const tooBig = file.size > 15 * 1024 * 1024
-    if (tooBig) { setError("That file is larger than 15 MB — please upload a smaller scan or photo."); return }
+    if (file.size > 15 * 1024 * 1024) { setError("That file is larger than 15 MB — please upload a smaller scan or photo."); return }
     setFileName(file.name)
     setFileSize(file.size)
   }
 
-  const upload = async () => {
-    if (!fileName.trim()) { setError("Choose a file to upload first (PDF, JPG or PNG)."); return }
+  const runExtraction = async () => {
     setBusy(true)
     setError("")
     setNotice("")
+    setDupWarning("")
     try {
-      // Real file intake: the upload POSTs the actual document; the server
-      // pipeline (OCR + structured extraction) runs and returns fields for
-      // human review. AI output is never auto-verified.
       const res = await fetch("/api/documents/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -61,6 +79,17 @@ export default function DocumentsPage() {
     } finally {
       setBusy(false)
     }
+  }
+
+  const upload = async () => {
+    if (!fileName.trim()) { setError("Choose a file to upload first (PDF, JPG or PNG)."); return }
+    // Duplicate detection: same kind + similar name within 30 days needs confirmation.
+    const duplicate = detectDuplicate(getDocuments(), fileName, kind)
+    if (duplicate && !dupWarning) {
+      setDupWarning(`This looks like "${duplicate.title}" uploaded ${new Date(duplicate.uploadedAt).toLocaleDateString()}. Upload it again anyway?`)
+      return
+    }
+    await runExtraction()
   }
 
   const correctField = (docId: string, index: number, value: string) => {
@@ -101,7 +130,7 @@ export default function DocumentsPage() {
         <div className="panel-heading"><div><h2>New upload</h2><p>PDF, JPG or PNG — up to 15 MB. Processing starts immediately.</p></div><Upload size={18} className="verified" /></div>
 
         <div
-          className={`dropzone ${dragOver ? "over" : ""}`}
+          className={`dropzone ${dragOver ? "over" : ""} ${busy ? "scanning" : ""}`}
           onDragOver={(event) => { event.preventDefault(); setDragOver(true) }}
           onDragLeave={() => setDragOver(false)}
           onDrop={(event) => { event.preventDefault(); setDragOver(false); onPick(event.dataTransfer.files?.[0] ?? null) }}
@@ -109,17 +138,12 @@ export default function DocumentsPage() {
           role="button"
           aria-label="Choose a file to upload"
         >
-          <input
-            ref={inputRef}
-            type="file"
-            accept={ACCEPT}
-            className="visually-hidden"
-            onChange={(event) => onPick(event.target.files?.[0] ?? null)}
-          />
-          <span className="dropzone-icon"><Upload size={22} /></span>
+          <input ref={inputRef} type="file" accept={ACCEPT} className="visually-hidden" onChange={(event) => onPick(event.target.files?.[0] ?? null)} />
+          <span className="dropzone-icon"><ScanLine size={22} /></span>
           {fileName
             ? <><strong>{fileName}</strong><small>{formatSize(fileSize)} · click to choose a different file</small></>
             : <><strong>Drag a file here, or click to choose</strong><small>PDF, JPG, PNG or HEIC — up to 15 MB</small></>}
+          {busy && <div className="scan-beam" aria-hidden />}
         </div>
 
         <div className="edit-grid">
@@ -130,9 +154,64 @@ export default function DocumentsPage() {
           </label>
         </div>
 
-        <div className="modal-actions"><button className="btn primary" onClick={upload} disabled={busy}>{busy ? "Processing…" : <><FileText size={16} /> Upload &amp; extract</>}</button></div>
+        <div className="modal-actions"><button className="btn primary" onClick={upload} disabled={busy}>{busy ? "Scanning document…" : <><FileText size={16} /> Upload &amp; extract</>}</button></div>
         {error && <p className="form-note bad"><ShieldAlert size={13} /> {error}</p>}
+        {dupWarning && <p className="form-note bad"><Info size={13} /> {dupWarning}</p>}
         {notice && <p className="form-note ok"><Check size={13} /> {notice}</p>}
+      </section>
+
+      {flags.length > 0 && (
+        <section className="card assess-uncertain" role="status">
+          <Lightbulb size={15} />
+          <div>
+            <strong>Missing information detected</strong>
+            <ul className="flag-list">{flags.map((flag) => <li key={flag}>{flag}</li>)}</ul>
+          </div>
+        </section>
+      )}
+
+      {medications.length > 0 && (
+        <section className="card panel">
+          <div className="panel-heading"><div><h2>My medications</h2><p>Structured from your verified prescriptions — click a medicine for a plain-language explanation (informational only).</p></div><Info size={18} className="verified" /></div>
+          {medications.map((med) => (
+            <div className="med-row" key={`${med.id}-${med.medicine}`}>
+              <button className="med-name" onClick={() => setOpenExplainer(openExplainer === med.id + med.medicine ? null : med.id + med.medicine)}>
+                <strong>{med.medicine}</strong>
+                {openExplainer === med.id + med.medicine ? <Info size={14} /> : <Lightbulb size={14} className="muted" />}
+              </button>
+              <div className="med-meta">
+                <span>{med.strength !== "not stated" ? med.strength : "strength not stated"}</span>
+                <span>{med.frequency !== "not stated" ? med.frequency : "frequency not stated"}</span>
+                <span>{med.duration !== "not stated" ? `for ${med.duration}` : "duration not stated"}</span>
+              </div>
+              {openExplainer === med.id + med.medicine && (
+                <motion.p className="med-explain" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}>
+                  {explainMedication(med.medicine)} <em>This is general information, not treatment advice.</em>
+                </motion.p>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
+
+      <section className="card panel">
+        <div className="panel-heading"><div><h2>Health timeline</h2><p>Your records in order — built from what is actually in your wallet.</p></div><Clock3 size={18} className="verified" /></div>
+        {timeline.length === 0 && <p className="runlog-empty">Nothing yet — your uploads will appear here in order.</p>}
+        <div className="v-timeline">
+          {timeline.map((entry, index) => (
+            <motion.div
+              className={`v-entry ${entry.status === "VERIFIED" ? "ok" : "pending"}`}
+              key={entry.documentId}
+              initial={{ opacity: 0, x: -14 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: index * 0.04 }}
+            >
+              <span className="v-dot" />
+              <div><strong>{entry.label}</strong><small>{entry.kind} · {new Date(entry.when).toLocaleDateString()}</small></div>
+              <span className={`status-pill ${entry.status === "VERIFIED" ? "" : "muted"}`}>{entry.status === "VERIFIED" ? "Verified" : "Pending"}</span>
+            </motion.div>
+          ))}
+        </div>
       </section>
 
       <section className="card panel">

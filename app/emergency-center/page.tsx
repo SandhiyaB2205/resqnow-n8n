@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
+import { motion } from "framer-motion"
 import {
-  AlertTriangle, ArrowLeft, Ambulance, Check, Clock3, HeartPulse, Image as ImageIcon, Mic,
-  Phone, Siren, ShieldCheck, Stethoscope, MapPin,
+  AlertTriangle, ArrowLeft, Ambulance, Check, Clock3, HeartPulse, MapPin, Mic, MicOff,
+  Phone, Siren, ShieldCheck, Stethoscope, Zap,
 } from "lucide-react"
 import {
-  AMBULANCE_UNITS, getActiveCase, saveActiveCase, rankHospitals, type Assessment,
-  type EmergencyCase, type EmergencyPriority,
+  AMBULANCE_UNITS, getActiveCase, nextAmbulanceStatus, rankHospitals, saveActiveCase,
+  shouldEscalate, type Assessment, type EmergencyCase, type EmergencyPriority,
 } from "../../lib/platform"
 import { emitN8nEvent } from "../../lib/n8n"
 import { loadProfile } from "../../lib/storage"
@@ -16,6 +17,33 @@ import { mockProfile } from "../../lib/mock-data"
 
 const PRIORITY_TONE: Record<EmergencyPriority, string> = {
   CRITICAL: "bad", HIGH: "bad", MODERATE: "", LOW: "", UNKNOWN: "muted",
+}
+
+/** The coordination journey shown as a live stepper. */
+const STEPS = ["Reported", "Assessed", "Hospital", "Ambulance", "En route", "Completed"] as const
+function stepIndex(kase: EmergencyCase): number {
+  if (kase.status === "COMPLETED") return 5
+  if (kase.ambulance) return 4
+  if (kase.hospital) return 3
+  if (kase.status === "ASSESSED" || kase.status === "REPORTING") return 1
+  return 0
+}
+
+const SpeechRecognitionCtor =
+  typeof window !== "undefined"
+    ? (window as unknown as { SpeechRecognition?: new () => SpeechRecognitionLike; webkitSpeechRecognition?: new () => SpeechRecognitionLike }).SpeechRecognition
+      ?? (window as unknown as { webkitSpeechRecognition?: new () => SpeechRecognitionLike }).webkitSpeechRecognition
+    : undefined
+
+interface SpeechRecognitionLike {
+  lang: string
+  interimResults: boolean
+  continuous: boolean
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
+  onerror: (() => void) | null
+  onend: (() => void) | null
+  start: () => void
+  stop: () => void
 }
 
 export default function EmergencyCenterPage() {
@@ -28,7 +56,13 @@ export default function EmergencyCenterPage() {
   const [error, setError] = useState("")
   const [toastMessage, setToastMessage] = useState("")
   const [profile, setProfile] = useState(mockProfile)
+  const [gps, setGps] = useState<{ lat: number; lng: number; accuracy: number } | null>(null)
+  const [gpsState, setGpsState] = useState<"idle" | "locating" | "locked" | "denied" | "unavailable">("idle")
+  const [listening, setListening] = useState(false)
+  const [escalated, setEscalated] = useState(false)
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
+  const voiceBufferRef = useRef("")
 
   useEffect(() => {
     setProfile(loadProfile(mockProfile))
@@ -38,6 +72,65 @@ export default function EmergencyCenterPage() {
       setPhase("coordinate")
     }
   }, [])
+
+  // Escalation check: severe case with no ambulance past the SLA must escalate.
+  useEffect(() => {
+    if (!kase || escalated || kase.ambulance || kase.status === "COMPLETED") return
+    const timer = window.setInterval(() => {
+      const active = getActiveCase()
+      if (active && shouldEscalate(active)) {
+        setEscalated(true)
+        const at = new Date().toISOString()
+        const updated: EmergencyCase = {
+          ...active,
+          priority: "CRITICAL",
+          timeline: [...active.timeline, { at, label: "Case escalated — no ambulance available in time", detail: "Priority raised to CRITICAL; emergency contact alert sent" }],
+        }
+        setKase(updated)
+        saveActiveCase(updated)
+        void emitN8nEvent({ event: "emergency.escalated", source: "emergency-center", payload: { caseId: active.id, reason: "ambulance SLA exceeded" } })
+        setToastMessage("Case escalated — priority raised and emergency contact alerted")
+        window.setTimeout(() => setToastMessage(""), 4000)
+      }
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [kase, escalated])
+
+  const captureGps = () => {
+    if (!navigator.geolocation) { setGpsState("unavailable"); return }
+    setGpsState("locating")
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setGps({ lat: position.coords.latitude, lng: position.coords.longitude, accuracy: Math.round(position.coords.accuracy) })
+        setGpsState("locked")
+      },
+      () => setGpsState("denied"),
+      { enableHighAccuracy: true, timeout: 8000 },
+    )
+  }
+
+  const toggleVoice = () => {
+    if (listening) { recognitionRef.current?.stop(); setListening(false); return }
+    const Ctor = SpeechRecognitionCtor
+    if (!Ctor) { setToastMessage("Voice input is not supported in this browser — please type the description"); window.setTimeout(() => setToastMessage(""), 3500); return }
+    const recognition = new Ctor()
+    recognition.lang = "en-IN"
+    recognition.interimResults = false
+    recognition.continuous = true
+    voiceBufferRef.current = ""
+    recognition.onresult = (event) => {
+      let text = ""
+      for (let i = 0; i < event.results.length; i++) text += event.results[i][0].transcript + " "
+      voiceBufferRef.current = text.trim()
+      const target = formRef.current?.elements.namedItem("voiceTranscript") as HTMLTextAreaElement | null
+      if (target) target.value = text.trim()
+    }
+    recognition.onerror = () => setListening(false)
+    recognition.onend = () => setListening(false)
+    recognitionRef.current = recognition
+    recognition.start()
+    setListening(true)
+  }
 
   const submitReport = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -63,6 +156,7 @@ export default function EmergencyCenterPage() {
       })
       const json = await res.json()
       if (!json.ok) throw new Error(json.error ?? "Assessment failed")
+      void emitN8nEvent({ event: "emergency.reported", source: "emergency-center", payload: { gps: gps ? `${gps.lat.toFixed(4)},${gps.lng.toFixed(4)} ±${gps.accuracy}m` : "manual location only" } })
       setAssessment(json.assessment)
       setRanked(json.hospitals)
       setAnonymousId(json.anonymousId)
@@ -141,8 +235,38 @@ export default function EmergencyCenterPage() {
     }
     setKase(updated)
     saveActiveCase(null)
+    void emitN8nEvent({ event: "emergency.resolved", source: "emergency-center", payload: { caseId: kase.id } })
     setToastMessage("Case completed — timeline archived")
     window.setTimeout(() => setToastMessage(""), 3000)
+  }
+
+  const advanceAmbulance = () => {
+    if (!kase?.ambulance) return
+    const next = nextAmbulanceStatus(kase.ambulance.status)
+    const at = new Date().toISOString()
+    const updated: EmergencyCase = {
+      ...kase,
+      status: next === "TRANSPORTING" ? "TRANSPORTING" : kase.status,
+      ambulance: { ...kase.ambulance, status: next, updatedAt: at },
+      timeline: [...kase.timeline, { at, label: `Ambulance ${next.toLowerCase()}` }],
+    }
+    setKase(updated)
+    saveActiveCase(updated)
+    void emitN8nEvent({ event: "ambulance.status_changed", source: "emergency-center", payload: { caseId: kase.id, status: next } })
+  }
+
+  const cancelCase = () => {
+    if (!kase) return
+    const at = new Date().toISOString()
+    const updated: EmergencyCase = {
+      ...kase,
+      status: "COMPLETED",
+      timeline: [...kase.timeline, { at, label: "Emergency cancelled by reporter" }],
+    }
+    saveActiveCase(null)
+    setKase(updated)
+    setPhase("report")
+    void emitN8nEvent({ event: "emergency.cancelled", source: "emergency-center", payload: { caseId: kase.id } })
   }
 
   return (
@@ -161,10 +285,27 @@ export default function EmergencyCenterPage() {
       {error && <div className="workflow-ping bad"><AlertTriangle size={14} />{error}</div>}
 
       {phase === "report" && (
-        <form className="card" ref={formRef} onSubmit={submitReport}>
-          <div className="panel-heading"><div><h2>Report the incident</h2><p>Bystander input — fill what you know. Voice and images are optional.</p></div><Siren className="verified" /></div>
+        <>
+          <section className="card sos-card">
+            <button type="button" className="sos-button" onClick={captureGps} aria-label="One-tap emergency: capture location and start reporting">
+              <Zap size={30} />
+              <span>SOS</span>
+            </button>
+            <div className="sos-copy">
+              <strong>One-tap emergency</strong>
+              <small>
+                {gpsState === "idle" && "Tap to capture your GPS location, then add details — every second counts."}
+                {gpsState === "locating" && "Acquiring GPS lock…"}
+                {gpsState === "locked" && gps && `Location locked (±${gps.accuracy} m) — coordinates will be shared with responders.`}
+                {gpsState === "denied" && "Location permission denied — fill in the location manually below."}
+                {gpsState === "unavailable" && "GPS unavailable on this device — fill in the location manually below."}
+              </small>
+            </div>
+          </section>
+          <form className="card" ref={formRef} onSubmit={submitReport}>
+          <div className="panel-heading"><div><h2>Report the incident</h2><p>Bystander input — fill what you know. Voice and location are optional.</p></div><Siren className="verified" /></div>
           <div className="edit-grid">
-            <label>Location<input name="location" required placeholder="e.g. Near the junction of 5th Ave" /></label>
+            <label>Location<input name="location" required defaultValue={gps ? `GPS: ${gps.lat.toFixed(5)}, ${gps.lng.toFixed(5)}` : ""} placeholder="e.g. Near the junction of 5th Ave" /></label>
             <label>Accident type
               <select name="accidentType" defaultValue="Road accident">
                 {["Road accident", "Fall from height", "Fire / burns", "Drowning", "Electric shock", "Medical emergency", "Other"].map((item) => <option key={item}>{item}</option>)}
@@ -177,18 +318,36 @@ export default function EmergencyCenterPage() {
             <label><input type="checkbox" name="breathing" defaultChecked /> Breathing</label>
             <label><input type="checkbox" name="visibleBleeding" /> Visible bleeding</label>
           </div>
-          <label className="voice-label">Voice description (optional)<textarea name="voiceTranscript" rows={2} placeholder="e.g. Two people injured near the junction, one is unconscious…" /></label>
+          <div className="voice-row">
+            <label className="voice-label">Voice description (optional)<textarea name="voiceTranscript" rows={2} placeholder="e.g. Two people injured near the junction, one is unconscious…" /></label>
+            <button type="button" className={`mic-button ${listening ? "listening" : ""}`} onClick={toggleVoice} aria-label={listening ? "Stop voice input" : "Start voice input"}>
+              {listening ? <MicOff size={18} /> : <Mic size={18} />}
+              {listening ? <span>Listening…</span> : <span>Speak</span>}
+            </button>
+          </div>
           <label className="voice-label">Scene note (optional)<textarea name="imageNote" rows={2} placeholder="Describe what you see — vehicles involved, hazards, weather…" /></label>
           <div className="modal-actions">
             <button className="btn primary" disabled={busy}>{busy ? "Assessing…" : <><Siren size={16} /> Start emergency case</>}</button>
           </div>
         </form>
+        </>
       )}
 
-      {phase === "assessing" && <div className="card center-card"><p>Assessing the incident…</p></div>}
+      {phase === "assessing" && (
+        <div className="card center-card">
+          <motion.p animate={{ opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 1.4 }}>Structuring the incident and assessing priority…</motion.p>
+        </div>
+      )}
 
       {phase === "coordinate" && kase && assessment && (
         <>
+          <div className="case-stepper" role="list" aria-label="Emergency case progress">
+            {STEPS.map((label, index) => (
+              <div key={label} className={`step ${index <= stepIndex(kase) ? "done" : ""} ${index === stepIndex(kase) && kase.status !== "COMPLETED" ? "current" : ""}`} role="listitem">
+                <span className="step-dot" /><small>{label}</small>
+              </div>
+            ))}
+          </div>
           <div className="detail-page-grid">
             <section className="card">
               <div className="panel-heading">
@@ -260,7 +419,9 @@ export default function EmergencyCenterPage() {
             ))}
             <div className="modal-actions">
               <a className="outline" href="/emergency-access"><MapPin size={15} /> Responder view</a>
-              {kase.status === "AMBULANCE_DISPATCHED" && <button className="outline" onClick={completeCase}>Mark case completed</button>}
+              {kase.ambulance && kase.ambulance.status !== "COMPLETED" && <button className="outline" onClick={advanceAmbulance}>Advance status ({nextAmbulanceStatus(kase.ambulance.status)})</button>}
+              {kase.status === "AMBULANCE_DISPATCHED" && <button className="primary" onClick={completeCase}>Mark case completed</button>}
+              {kase.status !== "COMPLETED" && <button className="danger-link" onClick={cancelCase}>Cancel case</button>}
             </div>
           </section>
         </>

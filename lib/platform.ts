@@ -101,6 +101,26 @@ export function rankHospitals(assessment: Assessment): (Hospital & { matched: st
   }).sort((a, b) => b.score - a.score)
 }
 
+const AMBULANCE_FLOW: AmbulanceStatus[] = [
+  "REQUESTED", "ASSIGNED", "EN ROUTE", "ARRIVED", "PICKUP", "TRANSPORTING", "ARRIVED HOSPITAL", "COMPLETED",
+]
+
+/** Advance the ambulance one step through the real status flow (state machine). */
+export function nextAmbulanceStatus(current: AmbulanceStatus): AmbulanceStatus {
+  const index = AMBULANCE_FLOW.indexOf(current)
+  return AMBULANCE_FLOW[Math.min(index + 1, AMBULANCE_FLOW.length - 1)]
+}
+
+/**
+ * Escalation rule: a severe case with no ambulance assigned after the SLA
+ * window must be escalated (emergency workflow raises priority + alerts).
+ */
+export function shouldEscalate(kase: EmergencyCase, slaSeconds = 60): boolean {
+  const severe = kase.priority === "CRITICAL" || kase.priority === "HIGH"
+  const waiting = Date.now() - new Date(kase.createdAt).getTime() > slaSeconds * 1000
+  return severe && !kase.ambulance && waiting && kase.status !== "COMPLETED"
+}
+
 const CASE_KEY = "resq-emergency-case"
 
 export function getActiveCase(): EmergencyCase | null {
@@ -169,6 +189,119 @@ export function extractDocument(fileName: string, kind: DocumentKind): WalletDoc
     fields,
     qualityNotes,
   }
+}
+
+/* ================= Medication intelligence ================= */
+
+export interface NormalizedMedication {
+  medicine: string
+  strength: string
+  frequency: string
+  duration: string
+}
+
+const FREQ_MAP: [RegExp, string][] = [
+  [/\b(bd|bid|b\.d\.?)\b/i, "twice daily"],
+  [/\b(td?s|tid|t\.d\.s\.?)\b/i, "three times daily"],
+  [/\b(qds|qid|q\.d\.s\.?)\b/i, "four times daily"],
+  [/\b(od|qd|once)\b/i, "once daily"],
+  [/\bhs\b/i, "at bedtime"],
+  [/\b(prn)\b/i, "as needed"],
+  [/\bq(\d+)h\b/i, "every $1 hours"],
+]
+
+/** "Metformin 500 mg BD" -> structured { medicine, strength, frequency, duration }. */
+export function normalizeMedication(raw: string): NormalizedMedication {
+  const text = raw.trim()
+  const strength = text.match(/\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|iu|%)/i)?.[0] ?? ""
+  let frequency = ""
+  let duration = text.match(/\d+\s*(?:days?|weeks?|months?)\b/i)?.[0] ?? ""
+  let medicine = text
+    .replace(strength, "")
+    .replace(/\d+\s*(?:days?|weeks?|months?)\b/i, "")
+    .replace(/\b(bd|bid|b\.d\.?|td?s|tid|t\.d\.s\.?|qds|qid|q\.d\.s\.?|od|qd|hs|prn|q\d+h|once daily|twice daily|three times daily|four times daily|as needed)\b/gi, "")
+    .replace(/[-–,;]+\s*$/, "")
+    .trim()
+  for (const [pattern, label] of FREQ_MAP) {
+    const hit = text.match(pattern)
+    if (hit) {
+      frequency = label.includes("$1") ? label.replace("$1", hit[1]) : label
+      break
+    }
+  }
+  if (!medicine) medicine = text
+  return { medicine, strength, frequency: frequency || "not stated", duration: duration || "not stated" }
+}
+
+/** Plain-language education about a medicine. Informational only — never advice. */
+const MED_EXPLANATIONS: [RegExp, string][] = [
+  [/metformin/i, "Metformin is a common diabetes medicine. It helps the body respond to insulin and lowers sugar production in the liver."],
+  [/amlodipine|nifedipine/i, "This is a calcium-channel blocker — it relaxes blood vessels and is commonly used for high blood pressure."],
+  [/atorvastatin|simvastatin|rosuvastatin/i, "This is a statin. It lowers cholesterol produced by the liver to reduce long-term heart risk."],
+  [/amoxicillin|azithromycin|ciprofloxacin|cefixime|doxycycline/i, "This is an antibiotic. It fights bacterial infections — completing the full course matters even if you feel better."],
+  [/paracetamol|acetaminophen|ibuprofen|diclofenac/i, "This is a pain and fever reliever (analgesic/anti-inflammatory)."],
+  [/pantoprazole|omeprazole|ranitidine/i, "This reduces stomach acid — commonly prescribed with painkillers or for acidity."],
+  [/thyroxine|levothyroxine/i, "This replaces or supports thyroid hormone levels."],
+  [/insulin/i, "Insulin helps the body move sugar from the blood into cells."],
+  [/clopidogrel|aspirin/i, "This is a blood-thinner (antiplatelet) that helps prevent clots."],
+  [/salbutamol|formoterol/i, "This is an inhaled medicine that opens the airways."],
+]
+
+export function explainMedication(name: string): string {
+  for (const [pattern, text] of MED_EXPLANATIONS) {
+    if (pattern.test(name)) return text
+  }
+  return "No plain-language description is available for this medicine yet. Ask your doctor or pharmacist to explain what it is for and how to take it."
+}
+
+/** medications present but missing strength/dosage -> review flags (never auto-decided). */
+export function detectMissingInformation(docs: WalletDocument[]): string[] {
+  const flags: string[] = []
+  for (const doc of docs.filter((item) => item.stage === "VERIFIED" && item.kind === "Prescription")) {
+    const value = (label: string) => doc.fields.find((field) => field.label === label)?.value.trim() ?? ""
+    const medicine = value("Medicine")
+    if (medicine && !value("Dosage")) flags.push(`${doc.title}: medicine listed but dosage missing — review required`)
+    if (medicine && !value("Frequency")) flags.push(`${doc.title}: frequency not stated — review required`)
+  }
+  return flags
+}
+
+/** Same kind + similar title within 30 days -> likely duplicate (human confirms). */
+export function detectDuplicate(docs: WalletDocument[], incomingTitle: string, incomingKind: DocumentKind): WalletDocument | null {
+  const normalize = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "")
+  const incoming = normalize(incomingTitle)
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+  return (
+    docs.find((doc) => {
+      if (doc.kind !== incomingKind) return false
+      const at = new Date(doc.uploadedAt).getTime()
+      if (at < cutoff) return false
+      const existing = normalize(doc.title)
+      if (!existing || !incoming) return false
+      return existing === incoming || existing.includes(incoming) || incoming.includes(existing)
+    }) ?? null
+  )
+}
+
+export interface TimelineEntry {
+  when: string
+  kind: DocumentKind | "Verification"
+  label: string
+  status: "VERIFIED" | "PENDING"
+  documentId: string
+}
+
+/** Chronological health timeline built from REAL documents, newest last. */
+export function buildMedicationTimeline(docs: WalletDocument[]): TimelineEntry[] {
+  return docs
+    .map((doc) => ({
+      when: doc.uploadedAt,
+      kind: doc.kind,
+      label: doc.title,
+      status: doc.stage === "VERIFIED" ? ("VERIFIED" as const) : ("PENDING" as const),
+      documentId: doc.id,
+    }))
+    .sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
 }
 
 /* ================= Provider access requests ================= */
