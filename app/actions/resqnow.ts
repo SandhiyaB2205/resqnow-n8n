@@ -5,8 +5,9 @@ import { headers } from "next/headers"
 import { revalidatePath } from "next/cache"
 import { auth } from "../../lib/auth"
 import { db } from "../../lib/db"
-import { auditEvents, consents, healthProfiles, healthRecords, emergencyTokens, providers, user } from "../../lib/db/schema"
+import { auditEvents, consents, healthProfiles, healthRecords, emergencyTokens, notifications, providers, user } from "../../lib/db/schema"
 import { createHash, randomBytes } from "node:crypto"
+import { mockAudit, mockConsents, mockNotifications, mockProfile, mockRecords } from "../../lib/mock-data"
 
 async function getSession() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -75,7 +76,15 @@ export async function loadWallet() {
     db.select().from(consents).where(eq(consents.userId, userId)).orderBy(desc(consents.updatedAt)),
     db.select().from(auditEvents).where(eq(auditEvents.userId, userId)).orderBy(desc(auditEvents.createdAt)).limit(20),
   ])
-  return { profile: profile[0]?.data ?? null, records: records.map((row) => ({ id: row.id, ...(row.data as Record<string, unknown>) })), consents: consentRows.map((row) => ({ id: row.id, ...(row.data as Record<string, unknown>) })), audit: audit.map((row) => row.data) }
+  if (!profile[0] && !records.length && !consentRows.length && !audit.length) {
+    await db.insert(healthProfiles).values({ userId, data: mockProfile, updatedAt: new Date() })
+    await db.insert(healthRecords).values(mockRecords.map((record) => ({ id: `${userId}-${record.id}`, userId, data: { ...record, id: `${userId}-${record.id}` }, updatedAt: new Date() })))
+    await db.insert(consents).values(mockConsents.map((consent) => ({ id: `${userId}-${consent.id}`, userId, data: { ...consent, id: `${userId}-${consent.id}` }, updatedAt: new Date() })))
+    await db.insert(auditEvents).values(mockAudit.map((event, index) => ({ id: `${userId}-audit-${index}`, userId, data: event })))
+    await db.insert(notifications).values(mockNotifications.map((notification, index) => ({ id: `${userId}-notification-${index}`, userId, data: notification })))
+    return { profile: mockProfile, records: mockRecords, consents: mockConsents, audit: mockAudit }
+  }
+  return { profile: profile[0]?.data ?? mockProfile, records: records.map((row) => ({ id: row.id, ...(row.data as Record<string, unknown>) })), consents: consentRows.map((row) => ({ id: row.id, ...(row.data as Record<string, unknown>) })), audit: audit.map((row) => row.data) }
 }
 
 export async function saveProfile(data: unknown) {
