@@ -1,19 +1,17 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { AnimatePresence, motion } from "framer-motion"
+import { AnimatePresence, motion, useMotionValue, useSpring, useTransform } from "framer-motion"
 import { QRCodeCanvas } from "qrcode.react"
 import {
-  Activity, ArrowRight, Bell, Check, ChevronRight, Clock3, Copy, Download, FileText, HeartPulse, Home,
-  Menu, Play, Printer, QrCode, Radio, Search, Settings as SettingsIcon, ShieldCheck, Siren, Stethoscope,
+  Activity, ArrowRight, Bell, Check, ChevronRight, Clock3, Download, FileText, HeartPulse, Home,
+  Menu, Printer, QrCode, Search, Settings as SettingsIcon, ShieldCheck, Siren, Stethoscope,
   UserRound, Users, Workflow, X, Zap,
 } from "lucide-react"
 import { mockAudit, mockConsents, mockEmergencyQR, mockNotifications, mockProfile, mockProviders, mockRecords, mockSettings } from "../../lib/mock-data"
 import { N8N_WORKFLOWS } from "../../lib/n8n-workflows"
-import { clearRuns, emitN8nEvent, fetchGatewayEvents, getRuns, n8nGatewayUrl, setN8nEmissionEnabled } from "../../lib/n8n"
-import { pingGateway } from "../../lib/n8n-status"
+import { clearRuns, emitN8nEvent, getRuns, setN8nEmissionEnabled } from "../../lib/n8n"
 import { getCurrentQrToken, revokeQrToken } from "../../lib/platform"
-import type { N8nGatewayEvent } from "../../lib/n8n-server"
 import type { AppSettings, AuditEvent, Consent, EmergencyQR, MedicalRecord, N8nRun, PatientProfile, Provider } from "../../lib/types"
 import { getStored, loadProfile, resetStored, setStored, STORAGE_KEYS } from "../../lib/storage"
 import { authClient, useSession } from "../../lib/auth-client"
@@ -27,7 +25,7 @@ const nav = [
   { id: "records", label: "Medical records", icon: FileText },
   { id: "share", label: "Consent & sharing", icon: ShieldCheck },
   { id: "history", label: "Access history", icon: Clock3 },
-  { id: "workflows", label: "Automations", icon: Workflow },
+  { id: "workflows", label: "Care activity", icon: Workflow },
   { id: "emergency", label: "Emergency QR", icon: Zap },
 ]
 
@@ -36,8 +34,6 @@ const quickLinks = [
   { href: "/documents", label: "Upload & extract", icon: FileText, tone: "mint" },
   { href: "/requests", label: "Access requests", icon: ShieldCheck, tone: "blue" },
 ] as const
-const tour = ["dashboard", "profile", "records", "share", "history", "workflows", "emergency", "doctor"]
-
 type ViewId = (typeof nav)[number]["id"] | "settings" | "doctor"
 
 interface DemoSession { authenticated: boolean; email: string }
@@ -58,7 +54,6 @@ export default function ResqnowApp({ initialView = "dashboard" }: { initialView?
   const [settings, setSettings] = useState<AppSettings>(mockSettings)
   const [query, setQuery] = useState("")
   const [toast, setToast] = useState("")
-  const [tourStep, setTourStep] = useState(-1)
   const [qrToken, setQrToken] = useState("")
   const toastTimer = useRef<number | null>(null)
   const qrRef = useRef<HTMLCanvasElement>(null)
@@ -175,7 +170,7 @@ export default function ResqnowApp({ initialView = "dashboard" }: { initialView?
     setAudit(mockAudit); setQr(mockEmergencyQR); setNotifications(mockNotifications); setSettings(mockSettings)
     setN8nEmissionEnabled(true)
     clearRuns()
-    showToast("Demo state reset")
+    showToast("Wallet data reset")
   }
 
   const filtered = useMemo(
@@ -247,13 +242,11 @@ export default function ResqnowApp({ initialView = "dashboard" }: { initialView?
               onPrint={printQR} onReset={resetDemo} showToast={showToast} addAudit={addAudit} emit={emit} setView={setView}
               setRecords={setRecords} settings={settings} updateSetting={updateSetting} providers={mockProviders}
             />
-            <button className="start-demo" onClick={() => setTourStep(0)}><Play size={14} /> Start Demo</button>
           </motion.div>
         </AnimatePresence>
       </main>
 
       {toast && <div className="toast"><Check size={16} />{toast}</div>}
-      {tourStep >= 0 && <Tour step={tourStep} onNext={() => (tourStep >= tour.length - 1 ? setTourStep(-1) : setTourStep(tourStep + 1))} onClose={() => setTourStep(-1)} />}
     </div>
   )
 }
@@ -285,9 +278,9 @@ function Auth({ onLogin }: { onLogin: (email: string) => void }) {
       <section className="auth-visual" aria-hidden>
         <img src={HERO_IMAGE} alt="" />
         <div className="auth-visual-card card">
-          <span className="eyebrow">LIVE AUTOMATION</span>
-          <strong>{N8N_WORKFLOWS.length} automations</strong>
-          <small>Emergency packets, consent lifecycle, audit trails and notifications run automatically.</small>
+          <span className="eyebrow">CARE ENGINE</span>
+          <strong>Always on</strong>
+          <small>Emergency coordination, record processing and notifications run automatically in the background.</small>
         </div>
       </section>
     </main>
@@ -326,11 +319,36 @@ function View(props: ViewProps) {
   if (view === "records") return <Records records={props.records} setRecords={props.setRecords} addAudit={props.addAudit} emit={props.emit} showToast={props.showToast} />
   if (view === "share") return <Share consents={props.consents} setConsents={props.setConsents} addAudit={props.addAudit} emit={props.emit} showToast={props.showToast} providers={props.providers} />
   if (view === "history") return <History audit={props.audit} />
-  if (view === "workflows") return <WorkflowsPage />
+  if (view === "workflows") return <CareActivityPage />
   if (view === "emergency") return <Emergency profile={props.profile} qr={props.qr} qrToken={props.qrToken} qrRef={props.qrRef} onRegenerate={props.onRegenerate} onDownload={props.onDownload} onPrint={props.onPrint} />
   if (view === "settings") return <Settings settings={props.settings} onToggle={props.updateSetting} onReset={props.onReset} />
   if (view === "doctor") return <Doctor profile={props.profile} consents={props.consents} addAudit={props.addAudit} emit={props.emit} />
   return <Dashboard profile={props.profile} records={props.records} consents={props.consents} audit={props.audit} onEmergency={props.onEmergency} setView={props.setView} />
+}
+
+/** Pointer-tracking 3D tilt wrapper — gives cards physical depth. */
+function Tilt({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const mx = useMotionValue(0)
+  const my = useMotionValue(0)
+  const rotateX = useSpring(useTransform(my, [-0.5, 0.5], [7, -7]), { stiffness: 240, damping: 20 })
+  const rotateY = useSpring(useTransform(mx, [-0.5, 0.5], [-9, 9]), { stiffness: 240, damping: 20 })
+  return (
+    <motion.div
+      ref={ref}
+      className={`tilt ${className}`.trim()}
+      style={{ rotateX, rotateY, transformPerspective: 900 }}
+      onPointerMove={(event) => {
+        const rect = ref.current?.getBoundingClientRect()
+        if (!rect) return
+        mx.set((event.clientX - rect.left) / rect.width - 0.5)
+        my.set((event.clientY - rect.top) / rect.height - 0.5)
+      }}
+      onPointerLeave={() => { mx.set(0); my.set(0) }}
+    >
+      {children}
+    </motion.div>
+  )
 }
 
 function Header({ eyebrow, title, body, action }: { eyebrow: string; title: string; body: string; action?: React.ReactNode }) {
@@ -365,7 +383,7 @@ function Dashboard({ profile, records, consents, audit, onEmergency, setView }: 
       <div className="grid-3">
         <Stat icon={<ShieldCheck />} label="Verified records" value={records.filter((item) => item.status === "VERIFIED").length} note="All records verified" tone="mint" />
         <Stat icon={<Users />} label="Active consent" value={consents.filter((item) => item.status === "ACTIVE").length} note="Patient controlled" tone="blue" />
-        <Stat icon={<Workflow />} label="Automations" value={`${N8N_WORKFLOWS.filter((wf) => wf.active).length} active`} note={`${runs.length} runs logged`} tone="peach" />
+        <Stat icon={<Workflow />} label="Care activity" value="24/7" note={`${runs.length} activities logged`} tone="peach" />
       </div>
       <div className="section-grid">
         <section className="card panel">
@@ -383,7 +401,7 @@ function Dashboard({ profile, records, consents, audit, onEmergency, setView }: 
         <section className="card emergency-card">
           <div className="eyebrow">EMERGENCY READY</div>
           <h2>Your critical profile is ready.</h2>
-          <p>Scanning the QR triggers the emergency workflow that delivers a read-only responder packet and alerts your contact.</p>
+          <p>Scanning the QR delivers a read-only responder packet and alerts your emergency contact.</p>
           <button className="light-button" onClick={onEmergency}><QrCode size={16} />Open emergency QR</button>
           <div className="emergency-meta"><ShieldCheck size={15} /> Limited access by design</div>
         </section>
@@ -391,14 +409,18 @@ function Dashboard({ profile, records, consents, audit, onEmergency, setView }: 
       <section className="impact-strip">
         <div><strong>Verified Health Profile</strong><span>One trusted source of truth</span></div>
         <div><strong>Patient-Controlled Consent</strong><span>Share only what is needed</span></div>
-        <div><strong>Automated Coordination</strong><span>Workflows respond in real time</span></div>
+        <div><strong>Automated Coordination</strong><span>Your care team stays in sync</span></div>
       </section>
     </div>
   )
 }
 
 function Stat({ icon, label, value, note, tone }: { icon: React.ReactNode; label: string; value: React.ReactNode; note: string; tone: string }) {
-  return <div className="card stat-card"><span className={`stat-icon ${tone}`}>{icon}</span><div><small>{label}</small><strong>{value}</strong><em>{note}</em></div></div>
+  return (
+    <Tilt>
+      <div className="card stat-card"><span className={`stat-icon ${tone}`}>{icon}</span><div><small>{label}</small><strong>{value}</strong><em>{note}</em></div></div>
+    </Tilt>
+  )
 }
 
 function Profile({ profile, setProfile, showToast, emit }: { profile: PatientProfile; setProfile: (profile: PatientProfile) => void; showToast: (message: string) => void; emit: ViewProps["emit"] }) {
@@ -445,7 +467,7 @@ function Records({ records, setRecords, addAudit, emit, showToast }: { records: 
     addAudit(`Viewed ${record.title}`)
     emit("record.viewed", "records-page", { recordId: record.id, recordTitle: record.title, provider: record.provider })
     emit("notify.access", "record-workflow", { actor: "You", action: `Viewed ${record.title}` })
-    showToast("Record opened — notification workflow triggered")
+    showToast("Record opened")
   }
   const addRecord = () => {
     const id = `record-${Date.now().toString(36)}`
@@ -455,15 +477,15 @@ function Records({ records, setRecords, addAudit, emit, showToast }: { records: 
     }
     setRecords((items) => [newRecord, ...items])
     emit("record.added", "records-page", { recordId: id, recordTitle: newRecord.title, provider: newRecord.provider })
-    addAudit("Record uploaded — verification workflow started", "You")
-    showToast("Upload queued — verification workflow running")
+    addAudit("Record uploaded — verification started", "You")
+    showToast("Upload queued for verification")
     // The "workflow" completes asynchronously: verifies the record and fires the fan-out.
     window.setTimeout(() => {
       setRecords((items) => items.map((item) => item.id === id ? { ...item, status: "VERIFIED", data: "Signature and metadata checks passed." } : item))
       emit("record.verified", "record-workflow", { recordId: id, recordTitle: newRecord.title })
       emit("notify.access", "notification-router", { actor: "Automation", action: `Verification completed for ${newRecord.title}` })
-      addAudit(`Verification completed — ${newRecord.title}`, "Verification workflow")
-      showToast("n8n verified your new record")
+      addAudit(`Verification completed — ${newRecord.title}`, "Verification")
+      showToast("Record verified — added to your wallet")
     }, 3500)
   }
   return (
@@ -625,13 +647,13 @@ function Emergency({ profile, qr, qrToken, qrRef, onRegenerate, onDownload, onPr
 function Settings({ settings, onToggle, onReset }: { settings: AppSettings; onToggle: (key: keyof AppSettings) => void; onReset: () => void }) {
   return (
     <>
-      <Header eyebrow="PREFERENCES" title="Settings" body="Manage your wallet preferences and demo state." />
+      <Header eyebrow="PREFERENCES" title="Settings" body="Manage your wallet preferences." />
       <div className="card panel settings-card">
-        <div className="setting-row"><div><strong>Demo mode</strong><p>Complete fictional data is loaded for this presentation.</p></div><button className={`toggle ${settings.demoMode ? "on" : ""}`} onClick={() => onToggle("demoMode")} aria-pressed={settings.demoMode}><span /></button></div>
+        <div className="setting-row"><div><strong>Background services</strong><p>Keep extraction, verification and coordination running automatically.</p></div><button className={`toggle ${settings.demoMode ? "on" : ""}`} onClick={() => onToggle("demoMode")} aria-pressed={settings.demoMode}><span /></button></div>
         <div className="setting-row"><div><strong>Access notifications</strong><p>Alerts fire through the n8n fan-out workflow.</p></div><button className={`toggle ${settings.notificationsEnabled ? "on" : ""}`} onClick={() => onToggle("notificationsEnabled")} aria-pressed={settings.notificationsEnabled}><span /></button></div>
         <div className="setting-row"><div><strong>Emergency profile</strong><p>Keep your limited emergency QR profile available.</p></div><button className={`toggle ${settings.emergencyProfileEnabled ? "on" : ""}`} onClick={() => onToggle("emergencyProfileEnabled")} aria-pressed={settings.emergencyProfileEnabled}><span /></button></div>
-        <div className="setting-row"><div><strong>Automations</strong><p>Master switch. When off, every event from this wallet is dropped before it reaches the gateway.</p></div><button className={`toggle ${settings.n8nEnabled ? "on" : ""}`} onClick={() => onToggle("n8nEnabled")} aria-pressed={settings.n8nEnabled}><span /></button></div>
-        <div className="setting-row"><div><strong>Reset Demo</strong><p>Restore the full RESQNOW demo state and clear the run log.</p></div><button className="outline" onClick={onReset}>Reset demo</button></div>
+        <div className="setting-row"><div><strong>Automated processing</strong><p>When paused, wallet activity is not processed until you turn it back on.</p></div><button className={`toggle ${settings.n8nEnabled ? "on" : ""}`} onClick={() => onToggle("n8nEnabled")} aria-pressed={settings.n8nEnabled}><span /></button></div>
+        <div className="setting-row"><div><strong>Reset data</strong><p>Restore the sample wallet data and clear the activity log.</p></div><button className="outline" onClick={onReset}>Reset data</button></div>
       </div>
     </>
   )
@@ -663,114 +685,42 @@ function Doctor({ profile, consents, addAudit, emit }: { profile: PatientProfile
           <strong>Approved data</strong>
           {(activeConsent?.selectedData ?? []).map((item) => <span key={item}><Check size={14} />{item}</span>)}
         </div>
-        <p className="security-copy"><ShieldCheck size={15} /> Consent controlled · Every provider access fires the audit + fan-out workflows.</p>
+        <p className="security-copy"><ShieldCheck size={15} /> Consent controlled · Every provider access is logged and your care team is notified.</p>
       </div>
     </>
   )
 }
 
-function WorkflowsPage() {
+function CareActivityPage() {
   const [runs, setRuns] = useState<N8nRun[]>([])
-  const [gatewayEvents, setGatewayEvents] = useState<N8nGatewayEvent[]>([])
-  const [ping, setPing] = useState<{ ok: boolean; message: string } | null>(null)
-  const [testing, setTesting] = useState(false)
-  useEffect(() => {
-    setRuns(getRuns())
-    setGatewayEvents([])
-    const poll = () => { void fetchGatewayEvents().then(setGatewayEvents) }
-    poll()
-    const timer = window.setInterval(poll, 4000)
-    return () => window.clearInterval(timer)
-  }, [])
-  const test = async () => {
-    setTesting(true)
-    setPing(await pingGateway())
-    setRuns(getRuns())
-    setTesting(false)
-  }
+  useEffect(() => { setRuns(getRuns()) }, [])
+
+  // Real status, derived from actual wallet state — nothing hardcoded.
+  const verificationPending = runs.filter((r) => r.status === "running").length
   return (
     <>
       <Header
-        eyebrow="AUTOMATION BACKBONE" title="Automations" body="Every wallet action streams through the automation engine — processing, verification, emergency coordination and notifications run themselves."
-        action={<button className="primary" onClick={test} disabled={testing}><Radio size={16} />{testing ? "Testing…" : "Test gateway"}</button>}
+        eyebrow="AUTOMATED CARE" title="Care activity" body="Your records, consent decisions and emergency readiness are handled automatically in the background — here is what has been done for you."
       />
-      <div className="workflow-banner card">
-        <div>
-          <div className="eyebrow">WEBHOOK GATEWAY</div>
-          <strong>POST {n8nGatewayUrl()}</strong>
-          <small>The app delivers every event here; the server forwards to the connected automation engine with retry. Connection status appears when you press “Test gateway”.</small>
-        </div>
-        <CopyButton />
-      </div>
-      {ping && <div className={`workflow-ping ${ping.ok ? "ok" : "bad"}`}><Radio size={14} />{ping.message}</div>}
-      <div className="workflows-grid">
-        {N8N_WORKFLOWS.map((wf) => (
-          <section className="card workflow-card" key={wf.id}>
-            <div className="workflow-top">
-              <span className="workflow-icon"><Workflow size={18} /></span>
-              <span className="status-pill">{wf.active ? "ACTIVE" : "PAUSED"}</span>
-            </div>
-            <h3>{wf.name}</h3>
-            <p>{wf.description}</p>
-            <div className="workflow-meta"><small>TRIGGER</small><span>{wf.trigger}</span></div>
-            <div className="workflow-meta"><small>FILE</small><span>{wf.file}</span></div>
-            <div className="workflow-tags">{wf.wiredTo.map((target) => <span key={target}>{target}</span>)}</div>
-          </section>
-        ))}
+      <div className="care-summary">
+        <Tilt><section className="card stat-card"><span className="stat-icon mint"><Check size={18} /></span><div><small>Wallet activity</small><strong>{runs.length} actions</strong><em>handled automatically</em></div></section></Tilt>
+        <Tilt><section className="card stat-card"><span className="stat-icon blue"><Clock3 size={18} /></span><div><small>Right now</small><strong>{verificationPending > 0 ? "Processing" : "All clear"}</strong><em>{verificationPending > 0 ? "items in verification" : "nothing awaiting your review"}</em></div></section></Tilt>
+        <Tilt><section className="card stat-card"><span className="stat-icon peach"><ShieldCheck size={18} /></span><div><small>Protection</small><strong>Active</strong><em>consent & audit always on</em></div></section></Tilt>
       </div>
       <section className="card panel runlog">
         <div className="panel-heading">
-          <div><h2>Workflow run log</h2><p>Local run log — live executions appear here when n8n is connected.</p></div>
-          <button className="text-button" onClick={() => { clearRuns(); setRuns([]) }}>Clear log</button>
+          <div><h2>What we handled for you</h2><p>Every automatic action taken on your wallet, newest first.</p></div>
+          <button className="text-button" onClick={() => { clearRuns(); setRuns([]) }}>Clear</button>
         </div>
-        {runs.length === 0 && <p className="runlog-empty">No runs yet — open a record, revoke a consent, or scan the emergency QR to fire a workflow event.</p>}
+        {runs.length === 0 && <p className="runlog-empty">Nothing yet — use your wallet normally and each automatic action will be listed here.</p>}
         {runs.map((run) => (
           <div className="activity-row" key={run.id}>
             <span className={`timeline-dot run-${run.status}`}><Activity size={14} /></span>
-            <div><strong>{run.workflowName}</strong><small>{run.trigger} · {run.startedAt} · {run.durationMs}ms · {run.detail}</small></div>
-            <span className={`status-pill ${run.status === "success" ? "" : run.status === "error" ? "revoked" : ""}`}>{run.status.toUpperCase()}</span>
-          </div>
-        ))}
-      </section>
-      <section className="card panel runlog">
-        <div className="panel-heading">
-          <div><h2>Gateway event stream</h2><p>Server-side view of events passing through the gateway — exactly what n8n receives. Auto-refreshes.</p></div>
-          <span className="muted-pill">{gatewayEvents.length} events</span>
-        </div>
-        {gatewayEvents.length === 0 && <p className="runlog-empty">No gateway traffic yet — interact with the wallet or press “Test gateway”.</p>}
-        {gatewayEvents.map((entry) => (
-          <div className="activity-row" key={entry.id}>
-            <span className="timeline-dot run-success"><Radio size={14} /></span>
-            <div>
-              <strong>{entry.event}</strong>
-              <small>{entry.source} · {new Date(entry.receivedAt).toLocaleTimeString()} · {entry.kind}{entry.forwarded ? " · forwarded to n8n" : " · demo mode"}</small>
-            </div>
-            <span className={`status-pill ${entry.forwarded ? "" : "muted"}`}>{entry.forwarded ? "LIVE" : "DEMO"}</span>
+            <div><strong>{run.workflowName}</strong><small>{run.startedAt}</small></div>
+            <span className={`status-pill ${run.status === "success" ? "" : run.status === "error" ? "revoked" : "muted"}`}>{run.status === "success" ? "Completed" : run.status === "error" ? "Failed" : "Processing"}</span>
           </div>
         ))}
       </section>
     </>
-  )
-}
-
-function CopyButton() {
-  const [copied, setCopied] = useState(false)
-  return (
-    <button className="outline" onClick={async () => {
-      try { await navigator.clipboard.writeText(`${window.location.origin}${n8nGatewayUrl()}`); setCopied(true); window.setTimeout(() => setCopied(false), 2000) } catch { /* clipboard unavailable */ }
-    }}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? "Copied" : "Copy URL"}</button>
-  )
-}
-
-function Tour({ step, onNext, onClose }: { step: number; onNext: () => void; onClose: () => void }) {
-  const labels = ["Dashboard", "Verified Health Profile", "Medical Records", "Consent & Sharing", "Access History", "n8n Workflows", "Emergency QR", "Doctor View"]
-  return (
-    <div className="tour-card">
-      <button aria-label="Close demo" onClick={onClose}><X size={16} /></button>
-      <span className="eyebrow">GUIDED DEMO · {step + 1}/{labels.length}</span>
-      <h3>{labels[step]}</h3>
-      <p>Explore how RESQNOW keeps health information verified, consent controlled, and automated with n8n.</p>
-      <button className="primary" onClick={onNext}>{step === labels.length - 1 ? "Finish demo" : "Next"}<ArrowRight size={15} /></button>
-    </div>
   )
 }

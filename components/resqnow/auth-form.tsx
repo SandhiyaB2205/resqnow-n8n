@@ -74,7 +74,7 @@ export default function AuthForm({ signup = false }: { signup?: boolean }) {
           {field("Email", "email", "email")}
           {field("Password", "password", "password")}
           {signup && field("Confirm password", "confirm", "password")}
-          {signup && <label className="check-row"><input type="checkbox" required /> I agree to use this wallet and understand it contains fictional demo data.</label>}
+          {signup && <label className="check-row"><input type="checkbox" required /> I agree to use this wallet and understand it is a demonstration environment with sample health data.</label>}
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="btn primary auth-submit" disabled={loading}>{loading ? "Working…" : signup ? "Create account" : "Log in"}<ArrowRight size={16} /></button>
         </form>

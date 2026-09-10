@@ -146,18 +146,20 @@ const PRESCRIPTION_FIELDS = ["Doctor", "Patient", "Date", "Diagnosis", "Medicine
 const LAB_FIELDS = ["Test", "Result", "Unit", "Reference range", "Date", "Laboratory"]
 
 /**
- * Stand-in extraction pipeline. Produces structured fields with per-field
- * confidence and quality notes. In production this stage is executed by the
- * automation engine (OCR + AI nodes) and returned via the callback route.
+ * Document intake stage. With no OCR engine connected the extraction returns
+ * EMPTY fields and says so — the patient fills them in from the document and a
+ * provider verifies. Never fabricates extracted values (product rule).
  */
 export function extractDocument(fileName: string, kind: DocumentKind): WalletDocument {
-  const base = ["Prescription", "Lab Report", "Discharge Summary", "Medical Certificate"].includes(kind)
-  const fields: ExtractedField[] = (kind === "Lab Report" ? LAB_FIELDS : PRESCRIPTION_FIELDS).map((label, index) => ({
+  const recognized = ["Prescription", "Lab Report", "Discharge Summary", "Medical Certificate"].includes(kind)
+  const fields: ExtractedField[] = (kind === "Lab Report" ? LAB_FIELDS : PRESCRIPTION_FIELDS).map((label) => ({
     label,
-    value: `${label} — pending engine extraction`,
-    confidence: base ? 0.55 + ((index * 7) % 40) / 100 : 0.35,
+    value: "",
+    confidence: 0,
   }))
-  const qualityNotes = base ? [] : ["Document type not confidently recognized — classified as Other"]
+  const qualityNotes = recognized
+    ? ["Automatic text extraction is not connected for this file yet — fill in the details below from the document, then send for verification."]
+    : ["Document type not confidently recognized — fill in the details below, then send for verification."]
   return {
     id: `doc-${Date.now().toString(36)}`,
     title: fileName,
